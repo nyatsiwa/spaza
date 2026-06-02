@@ -31,8 +31,7 @@ export async function POST(req: NextRequest) {
 
     const { cartItems, shippingAddress } = parsed.data
 
-    // Fetch products with seller info
-    const productIds = cartItems.map(i => i.productId)
+    const productIds = cartItems.map((i: any) => i.productId)
     const { data: products, error: prodError } = await supabase
       .from('products')
       .select('id, name, price_cents, stock_qty, seller_id, sellers(id, plan)')
@@ -43,29 +42,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Products not found' }, { status: 404 })
     }
 
-    // Build order items
     let subtotalCents = 0
-    const orderItems = []
+    const orderItems: any[] = []
 
     for (const cartItem of cartItems) {
-      const product = products.find(p => p.id === cartItem.productId)
-      if (!product) return NextResponse.json({ error: `Product ${cartItem.productId} not found` }, { status: 404 })
-      if (product.stock_qty < cartItem.quantity) {
-        return NextResponse.json({ error: `Insufficient stock for ${product.name}` }, { status: 400 })
+      const product = products.find((p: any) => p.id === cartItem.productId)
+      if (!product) return NextResponse.json({ error: `Product not found` }, { status: 404 })
+
+      const prod = product as any
+      if (prod.stock_qty < cartItem.quantity) {
+        return NextResponse.json({ error: `Insufficient stock for ${prod.name}` }, { status: 400 })
       }
 
-      const itemTotal = product.price_cents * cartItem.quantity
+      const itemTotal = prod.price_cents * cartItem.quantity
       subtotalCents += itemTotal
 
-      const seller = Array.isArray(product.sellers) ? product.sellers[0] : product.sellers as any
+      const seller = Array.isArray(prod.sellers) ? prod.sellers[0] : prod.sellers
       const { commissionCents, payoutCents, rate } = calculateCommission(itemTotal, seller?.plan || 'basic')
 
       orderItems.push({
-        product_id:          product.id,
-        seller_id:           product.seller_id,
-        product_name:        product.name,
+        product_id:          prod.id,
+        seller_id:           prod.seller_id,
+        product_name:        prod.name,
         quantity:            cartItem.quantity,
-        unit_price_cents:    product.price_cents,
+        unit_price_cents:    prod.price_cents,
         total_cents:         itemTotal,
         commission_rate:     rate,
         commission_cents:    commissionCents,
@@ -73,13 +73,11 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const shippingCents = subtotalCents >= 50000 ? 0 : 9900  // Free shipping over R500
+    const shippingCents = subtotalCents >= 50000 ? 0 : 9900
     const totalCents = subtotalCents + shippingCents
 
-    // Fetch buyer profile
     const { data: profile } = await supabase.from('profiles').select('full_name, email').eq('id', user.id).single()
 
-    // Create order
     const { data: order, error: orderError } = await supabase.from('orders').insert({
       buyer_id:          user.id,
       shipping_name:     shippingAddress.name,
@@ -99,19 +97,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to create order' }, { status: 500 })
     }
 
-    // Insert order items
     await supabase.from('order_items').insert(
-      orderItems.map(item => ({ ...item, order_id: order.id }))
+      orderItems.map((item: any) => ({ ...item, order_id: (order as any).id }))
     )
 
-    // Build PayFast payload
     const { url, fields } = buildCheckoutPayload({
-      orderId:     order.id,
-      orderNumber: order.order_number,
+      orderId:     (order as any).id,
+      orderNumber: (order as any).order_number,
       amountCents: totalCents,
       buyerEmail:  profile?.email || user.email || '',
       buyerName:   profile?.full_name || 'Customer',
-      itemName:    `Spaza Order ${order.order_number}`,
+      itemName:    `Spaza Order ${(order as any).order_number}`,
       itemDesc:    `${cartItems.length} item(s) from Spaza Marketplace`,
     })
 
