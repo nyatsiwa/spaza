@@ -6,9 +6,6 @@ const nextConfig = {
       { protocol: 'https', hostname: 'images.unsplash.com' },
     ],
   },
-  experimental: {
-    serverComponentsExternalPackages: ['crypto-js'],
-  },
 }
 
 module.exports = nextConfig
