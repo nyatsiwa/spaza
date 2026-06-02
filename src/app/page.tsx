@@ -1,75 +1,23 @@
-import { createServerSupabaseClient } from '@/lib/supabase'
-import Header from '@/components/layout/Header'
-import Footer from '@/components/layout/Footer'
-import HeroBanner from '@/components/shop/HeroBanner'
-import CategoryGrid from '@/components/shop/CategoryGrid'
-import ProductGrid from '@/components/shop/ProductGrid'
-import PromoStrip from '@/components/shop/PromoStrip'
-
-export default async function HomePage() {
-  const supabase = createServerSupabaseClient()
-
-  // Fetch featured products
-  const { data: featuredProducts } = await supabase
-    .from('products')
-    .select(`
-      id, name, slug, price_cents, compare_price_cents,
-      images, rating, review_count, is_featured,
-      sellers ( store_name, store_slug )
-    `)
-    .eq('status', 'active')
-    .eq('is_featured', true)
-    .order('sale_count', { ascending: false })
-    .limit(10)
-
-  // Fetch all active products
-  const { data: allProducts } = await supabase
-    .from('products')
-    .select(`
-      id, name, slug, price_cents, compare_price_cents,
-      images, rating, review_count,
-      sellers ( store_name, store_slug )
-    `)
-    .eq('status', 'active')
-    .order('created_at', { ascending: false })
-    .limit(20)
-
-  // Fetch categories
-  const { data: categories } = await supabase
-    .from('categories')
-    .select('*')
-    .eq('is_active', true)
-    .order('sort_order')
-
+export default function HomePage() {
   return (
-    <>
-      <Header />
-      <main>
-        <HeroBanner />
-        <PromoStrip />
-        <section className="max-w-[1320px] mx-auto px-5 mt-10">
-          <CategoryGrid categories={categories || []} />
-        </section>
-        {featuredProducts && featuredProducts.length > 0 && (
-          <section className="max-w-[1320px] mx-auto px-5 mt-10">
-            <div className="flex items-baseline justify-between mb-5">
-              <h2 className="font-display text-3xl text-gray-800 tracking-wide">Featured Products</h2>
-              <a href="/products" className="text-spaza-red text-sm font-semibold hover:underline">View All →</a>
-            </div>
-            <ProductGrid products={featuredProducts as any} />
-          </section>
-        )}
-        {allProducts && (
-          <section className="max-w-[1320px] mx-auto px-5 mt-10">
-            <div className="flex items-baseline justify-between mb-5">
-              <h2 className="font-display text-3xl text-gray-800 tracking-wide">New Arrivals</h2>
-              <a href="/products" className="text-spaza-red text-sm font-semibold hover:underline">Shop All →</a>
-            </div>
-            <ProductGrid products={allProducts as any} />
-          </section>
-        )}
-      </main>
-      <Footer />
-    </>
+    <main style={{fontFamily:'sans-serif',maxWidth:'1200px',margin:'0 auto',padding:'20px'}}>
+      <div style={{background:'#E3001B',padding:'20px',borderRadius:'10px',marginBottom:'20px'}}>
+        <h1 style={{color:'white',fontFamily:'Impact',fontSize:'48px',margin:0}}>
+          SPA<span style={{color:'#F5A623'}}>ZA</span>
+        </h1>
+        <p style={{color:'white',margin:'8px 0 0'}}>South Africa's Online Marketplace</p>
+      </div>
+      <div style={{background:'#0A1628',color:'white',padding:'20px',borderRadius:'10px',marginBottom:'20px'}}>
+        <p style={{margin:0}}>🚀 Spaza is live! Operated by <strong>Eden Extract (Pty) Ltd</strong> | Reg: 2025/756709/07</p>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'16px'}}>
+        {['Electronics','Fashion','Home & Garden','Sports','Books','Beauty'].map(cat => (
+          <div key={cat} style={{background:'white',border:'2px solid #eee',borderRadius:'10px',padding:'20px',textAlign:'center'}}>
+            <div style={{fontSize:'32px',marginBottom:'8px'}}>🛍️</div>
+            <strong>{cat}</strong>
+          </div>
+        ))}
+      </div>
+    </main>
   )
 }
