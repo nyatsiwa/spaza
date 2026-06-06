@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
@@ -9,7 +9,7 @@ import { createClient } from '@/lib/supabase'
 const NAVY = '#0A1628'
 const RED = '#D6001C'
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter()
   const params = useSearchParams()
   const redirect = params.get('redirect') || '/account'
@@ -86,5 +86,13 @@ function Field({ label, value, onChange, type = 'text', placeholder }: {
         style={{ padding: '12px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 15, outline: 'none' }}
       />
     </label>
+  )
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh' }} />}>
+      <RegisterForm />
+    </Suspense>
   )
 }
