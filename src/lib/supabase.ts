@@ -1,5 +1,4 @@
-import { createBrowserClient } from '@supabase/ssr'
-import { createServerClient } from '@supabase/ssr'
+import { createBrowserClient, createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { Database } from '@/types/database'
 
@@ -12,22 +11,34 @@ export function createClient() {
 }
 
 // ─── Server client (use in Server Components / Route Handlers) ─
-export function createServerSupabaseClient() {
-  const cookieStore = cookies()
+// Next 16: cookies() is async, so this function must be awaited.
+export async function createServerSupabaseClient() {
+  const cookieStore = await cookies()
   return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) { return cookieStore.get(name)?.value },
-        set(name, value, options) { cookieStore.set({ name, value, ...options }) },
-        remove(name, options) { cookieStore.set({ name, value: '', ...options }) },
+        getAll() {
+          return cookieStore.getAll()
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            )
+          } catch {
+            // The `setAll` method was called from a Server Component.
+            // Safe to ignore if middleware refreshes the session.
+          }
+        },
       },
     }
   )
 }
 
-// ─── Admin client (use in secure server actions only) ────────
+// ─── Admin client (server-only; bypasses RLS) ────────────────
+// Uses the service-role key. NEVER import this into client components.
 export function createAdminClient() {
   return createBrowserClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
