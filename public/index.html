@@ -408,36 +408,7 @@ footer{background:var(--navy);color:var(--gray-400);padding:60px 0 0;margin-top:
           <button class="btn-secondary" onclick="navigate('seller')">Become a Seller →</button>
         </div>
       </div>
-      <div class="hero-deals">
-        <div class="deal-card" onclick="addToCart('Samsung 65&quot; 4K Smart TV',12999)">
-          <div class="deal-label">⚡ Flash Sale</div>
-          <div class="deal-title">Samsung 65" 4K Smart TV</div>
-          <div class="deal-old">R 18,999</div>
-          <div class="deal-price">R 12,999</div>
-          <div class="deal-badge">SAVE 32%</div>
-        </div>
-        <div class="deal-card" onclick="addToCart('Apple AirPods Pro 2nd Gen',4299)">
-          <div class="deal-label">🎧 Best Seller</div>
-          <div class="deal-title">Apple AirPods Pro 2nd Gen</div>
-          <div class="deal-old">R 5,999</div>
-          <div class="deal-price">R 4,299</div>
-          <div class="deal-badge">SAVE 28%</div>
-        </div>
-        <div class="deal-card" onclick="addToCart('Nike Air Max 270',1599)">
-          <div class="deal-label">👟 Fashion</div>
-          <div class="deal-title">Nike Air Max 270</div>
-          <div class="deal-old">R 2,199</div>
-          <div class="deal-price">R 1,599</div>
-          <div class="deal-badge">SAVE 27%</div>
-        </div>
-        <div class="deal-card" onclick="addToCart('Nespresso Vertuo Next',2499)">
-          <div class="deal-label">☕ Home</div>
-          <div class="deal-title">Nespresso Vertuo Next</div>
-          <div class="deal-old">R 3,299</div>
-          <div class="deal-price">R 2,499</div>
-          <div class="deal-badge">SAVE 24%</div>
-        </div>
-      </div>
+      <div class="hero-deals" id="heroDeals"></div>
     </div>
   </div>
 
@@ -1078,61 +1049,102 @@ function navigate(page) {
   }
 }
 
-// ─── PRODUCTS ───
-const products = [
-  { name: "Apple iPhone 15 Pro 256GB", emoji: "📱", price: 21999, old: 24999, rating: 4.8, reviews: 1243, seller: "iStore SA", badges: ["hot"] },
-  { name: "Samsung Galaxy S24 Ultra", emoji: "📱", price: 19999, old: 23999, rating: 4.7, reviews: 876, seller: "Samsung SA", badges: ["sale"] },
-  { name: "Sony WH-1000XM5 Headphones", emoji: "🎧", price: 5499, old: 7499, rating: 4.9, reviews: 2341, seller: "AudioZone", badges: ["sale"] },
-  { name: "LG 27\" 4K Monitor", emoji: "🖥️", price: 6999, old: 8999, rating: 4.6, reviews: 445, seller: "TechHub", badges: [] },
-  { name: "DJI Mini 4 Pro Drone", emoji: "🚁", price: 14999, old: 17999, rating: 4.8, reviews: 234, seller: "FlyTech", badges: ["new"] },
-];
-const electronics = [
-  { name: "iPad Air 11\" M2 WiFi 128GB", emoji: "📱", price: 14999, old: 17499, rating: 4.7, reviews: 654, seller: "iStore SA", badges: ["sale"] },
-  { name: "Logitech MX Master 3S Mouse", emoji: "🖱️", price: 1499, old: 1899, rating: 4.8, reviews: 1122, seller: "TechDirect", badges: [] },
-  { name: "Anker 65W GaN Charger", emoji: "🔌", price: 399, old: 599, rating: 4.5, reviews: 3412, seller: "AnkerSA", badges: ["hot"] },
-  { name: "Philips Hue Starter Kit", emoji: "💡", price: 2199, old: 2799, rating: 4.6, reviews: 567, seller: "SmartHome", badges: ["new"] },
-  { name: "GoPro HERO 12 Black", emoji: "📷", price: 7999, old: 9499, rating: 4.7, reviews: 890, seller: "CameraZone", badges: ["sale"] },
-];
-const fashion = [
-  { name: "Levi's 501 Original Jeans", emoji: "👖", price: 899, old: 1299, rating: 4.5, reviews: 2341, seller: "Levi's Official", badges: ["sale"] },
-  { name: "Nike Dri-FIT Running Shirt", emoji: "👕", price: 549, old: 749, rating: 4.4, reviews: 876, seller: "NikeSA", badges: [] },
-  { name: "Adidas Ultraboost 23", emoji: "👟", price: 2999, old: 3699, rating: 4.8, reviews: 1234, seller: "Adidas SA", badges: ["hot"] },
-  { name: "Ray-Ban Wayfarer Sunglasses", emoji: "🕶️", price: 3499, old: 4299, rating: 4.7, reviews: 654, seller: "OpticsZone", badges: ["new"] },
-  { name: "Michael Kors Handbag", emoji: "👜", price: 4999, old: 6499, rating: 4.6, reviews: 432, seller: "LuxuryBags", badges: ["sale"] },
-];
+// ─── PRODUCTS (live from Supabase) ───
+const SUPABASE_URL = 'https://vpoqtzveksmoumtukynn.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_YN7atKSiP_LmkFO2GUigrw_hU9Aoaw4';
 
-function renderProducts(list, gridId) {
+function emojiFor(name){
+  const n = (name||'').toLowerCase();
+  if (n.includes('soursop')) return '🌿';
+  if (n.includes('dragon'))  return '🐉';
+  if (n.includes('custard')) return '🍃';
+  if (n.includes('rose'))    return '🌹';
+  if (n.includes('plant') || n.includes('tree')) return '🌱';
+  return '🛒';
+}
+
+function renderRealProducts(rows, gridId){
   const grid = document.getElementById(gridId);
   if (!grid) return;
-  grid.innerHTML = list.map(p => `
+  if (!rows || !rows.length){
+    grid.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--gray-400);padding:40px">No products available yet.</p>';
+    return;
+  }
+  const money = v => 'R ' + v.toLocaleString('en-ZA',{minimumFractionDigits:2,maximumFractionDigits:2});
+  grid.innerHTML = rows.map(p => {
+    const seller  = (p.sellers && p.sellers.store_name) || 'Eden Extract';
+    const price   = (p.price_cents || 0) / 100;
+    const old     = p.compare_price_cents ? p.compare_price_cents/100 : null;
+    const img     = (p.images && p.images.length)
+                      ? `<img src="${p.images[0]}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover">`
+                      : emojiFor(p.name);
+    const rating  = p.rating ? Number(p.rating) : null;
+    const reviews = p.review_count || 0;
+    const ratingHtml = rating
+      ? `<div class="product-rating"><span class="stars">${'★'.repeat(Math.floor(rating))}${'☆'.repeat(5-Math.floor(rating))}</span><span class="rating-count">(${reviews.toLocaleString()})</span></div>`
+      : '';
+    return `
     <div class="product-card">
-      <div class="product-badge-wrap">
-        ${p.badges.map(b => `<span class="badge badge-${b}">${b==='sale'?'🔥 SALE':b==='new'?'✨ NEW':'⭐ HOT'}</span>`).join('')}
-      </div>
+      <div class="product-badge-wrap"><span class="badge badge-new">✨ NEW</span></div>
       <button class="wishlist-btn">🤍</button>
-      <div class="product-img">${p.emoji}</div>
+      <div class="product-img">${img}</div>
       <div class="product-info">
-        <div class="product-seller">${p.seller}</div>
+        <div class="product-seller">${seller}</div>
         <div class="product-name">${p.name}</div>
-        <div class="product-rating">
-          <span class="stars">${'★'.repeat(Math.floor(p.rating))}${'☆'.repeat(5-Math.floor(p.rating))}</span>
-          <span class="rating-count">(${p.reviews.toLocaleString()})</span>
-        </div>
+        ${ratingHtml}
         <div class="product-price">
-          <span class="price-current">R ${p.price.toLocaleString()}</span>
-          ${p.old?`<span class="price-old">R ${p.old.toLocaleString()}</span><span class="price-save">Save R ${(p.old-p.price).toLocaleString()}</span>`:''}
+          <span class="price-current">${money(price)}</span>
+          ${old?`<span class="price-old">${money(old)}</span><span class="price-save">Save ${money(old-price)}</span>`:''}
         </div>
-        <button class="add-to-cart" onclick="addToCart('${p.name.replace(/'/g,"\\'")}',${p.price})">Add to Cart</button>
+        <button class="add-to-cart" onclick="addToCart('${p.name.replace(/'/g,"\\'")}',${price})">Add to Cart</button>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
   grid.querySelectorAll('.wishlist-btn').forEach(btn => {
     btn.addEventListener('click', e => { e.stopPropagation(); btn.textContent = btn.textContent==='🤍'?'❤️':'🤍'; });
   });
 }
-renderProducts(products,'productGrid');
-renderProducts(electronics,'electronicsGrid');
-renderProducts(fashion,'fashionGrid');
+
+function renderHeroDeals(rows){
+  const wrap = document.getElementById('heroDeals');
+  if (!wrap || !rows || !rows.length) return;
+  const money = v => 'R ' + v.toLocaleString('en-ZA',{minimumFractionDigits:2,maximumFractionDigits:2});
+  wrap.innerHTML = rows.slice(0,4).map(p => {
+    const price = (p.price_cents||0)/100;
+    return `
+    <div class="deal-card" onclick="addToCart('${p.name.replace(/'/g,"\\'")}',${price})">
+      <div class="deal-label">🌿 Featured</div>
+      <div class="deal-title">${p.name}</div>
+      <div class="deal-price">${money(price)}</div>
+      <div class="deal-badge">IN STOCK</div>
+    </div>`;
+  }).join('');
+}
+
+async function loadProducts(){
+  // Hide demo Electronics & Fashion sections (no stock in those categories yet)
+  ['electronicsGrid','fashionGrid'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el){ const sec = el.closest('.section'); if (sec) sec.style.display = 'none'; }
+  });
+  const grid    = document.getElementById('productGrid');
+  const base    = SUPABASE_URL + '/rest/v1/products';
+  const headers = { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY };
+  const withSeller = '?select=name,price_cents,compare_price_cents,images,rating,review_count,sellers(store_name)&status=eq.active&order=created_at.desc';
+  const plain      = '?select=name,price_cents,compare_price_cents,images,rating,review_count&status=eq.active&order=created_at.desc';
+  try {
+    let res = await fetch(base + withSeller, { headers });
+    if (!res.ok) res = await fetch(base + plain, { headers }); // fallback if FK embed unavailable
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    renderRealProducts(rows, 'productGrid');
+    renderHeroDeals(rows);
+  } catch (err) {
+    console.error('Product load failed:', err);
+    if (grid) grid.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:var(--gray-400);padding:40px">Unable to load products right now.</p>';
+  }
+}
+loadProducts();
 
 // ─── CART ───
 let cart = [];
