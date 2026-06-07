@@ -34,17 +34,10 @@ export async function middleware(request: NextRequest) {
   // in between. This refreshes the session and lets getUser read the cookie.
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Protect buyer-only routes: redirect to /login if not signed in.
-  const protectedPaths = ['/account', '/checkout']
-  const path = request.nextUrl.pathname
-  const isProtected = protectedPaths.some(p => path === p || path.startsWith(p + '/'))
-
-  if (isProtected && !user) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/login'
-    url.searchParams.set('redirect', path)
-    return NextResponse.redirect(url)
-  }
+  // NOTE: route protection is handled client-side inside each protected page
+  // (e.g. /account, /checkout) via supabase.auth.getUser(). The middleware no
+  // longer redirects; it only refreshes the session cookie on each request.
+  void user
 
   // Must return supabaseResponse so refreshed auth cookies reach the browser.
   return supabaseResponse
