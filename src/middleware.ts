@@ -3,7 +3,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 import type { Database } from '@/types/database'
 
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request })
+  // Start with a response that mirrors the incoming request.
+  let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,19 +15,23 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
+          // Write to the request (so this pass sees them) ...
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           )
-          response = NextResponse.next({ request })
+          // ... rebuild the response from the updated request ...
+          supabaseResponse = NextResponse.next({ request })
+          // ... and write the cookies onto the response so the browser keeps them.
           cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
+            supabaseResponse.cookies.set(name, value, options)
           )
         },
       },
     }
   )
 
-  // Refreshes the session cookie so Server Components see a valid user.
+  // IMPORTANT: call getUser() right after creating the client, with no logic
+  // in between. This refreshes the session and lets getUser read the cookie.
   const { data: { user } } = await supabase.auth.getUser()
 
   // Protect buyer-only routes: redirect to /login if not signed in.
@@ -41,11 +46,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  return response
+  // Must return supabaseResponse so refreshed auth cookies reach the browser.
+  return supabaseResponse
 }
 
 export const config = {
-  // Run on app routes, skip static assets, the static homepage, and API ITN webhooks.
   matcher: [
     '/((?!_next/static|_next/image|favicon.ico|index.html|api/payfast).*)',
   ],
