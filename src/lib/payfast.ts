@@ -46,15 +46,18 @@ function formatAmount(cents: number): string {
 }
 
 function generateSignature(data: Record<string, string>, passphrase?: string): string {
-  const params = { ...data }
-  if (passphrase) params.passphrase = passphrase
+  // PayFast builds the signature string from the fields in the ORDER they are
+  // submitted (NOT alphabetically sorted), excluding blank values, with spaces
+  // encoded as '+'. The passphrase, if set, is appended LAST.
+  const entries = Object.entries(data)
+    .filter(([, v]) => v !== '' && v !== undefined && v !== null)
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v).trim()).replace(/%20/g, '+')}`)
 
-  const queryString = Object.keys(params)
-    .sort()
-    .filter(k => params[k] !== '' && params[k] !== undefined)
-    .map(k => `${k}=${encodeURIComponent(params[k]).replace(/%20/g, '+')}`)
-    .join('&')
+  if (passphrase && passphrase.trim() !== '') {
+    entries.push(`passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, '+')}`)
+  }
 
+  const queryString = entries.join('&')
   return crypto.createHash('md5').update(queryString).digest('hex')
 }
 
