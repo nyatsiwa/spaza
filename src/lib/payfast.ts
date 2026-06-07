@@ -81,7 +81,7 @@ export function buildCheckoutPayload(params: PayFastCheckoutParams): {
   const merchantKey = process.env.PAYFAST_MERCHANT_KEY!
   const passphrase  = process.env.PAYFAST_PASSPHRASE
 
-  const fields: Record<string, string> = {
+  const rawFields: Record<string, string> = {
     merchant_id:     merchantId,
     merchant_key:    merchantKey,
     return_url:      `${appUrl}/checkout/success?order=${params.orderId}`,
@@ -96,6 +96,12 @@ export function buildCheckoutPayload(params: PayFastCheckoutParams): {
     item_description: (params.itemDesc || '').substring(0, 255),
     custom_str1:     params.orderId,
     custom_str2:     params.orderNumber,
+  }
+
+  // Remove blank fields so the POSTed set exactly matches the signed set.
+  const fields: Record<string, string> = {}
+  for (const [k, v] of Object.entries(rawFields)) {
+    if (v !== '' && v !== undefined && v !== null) fields[k] = String(v).trim()
   }
 
   fields.signature = generateSignature(fields, passphrase)
