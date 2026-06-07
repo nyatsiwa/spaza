@@ -21,9 +21,19 @@ interface CheckoutBody {
 
 export async function POST(request: Request) {
   try {
-    // 1. Auth — must be a logged-in buyer
+    // 1. Auth — identify the buyer from the Authorization bearer token.
+    // (More reliable than the session cookie reaching the route handler.)
+    const authHeader = request.headers.get('authorization') || ''
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+
     const supabase = await createServerSupabaseClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    let user = (await supabase.auth.getUser()).data.user
+
+    // Fallback: if the cookie session wasn't read, use the bearer token.
+    if (!user && token) {
+      user = (await supabase.auth.getUser(token)).data.user
+    }
+
     if (!user) {
       return NextResponse.json({ error: 'Please sign in to check out.' }, { status: 401 })
     }

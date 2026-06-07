@@ -66,9 +66,15 @@ export default function CheckoutPage() {
 
     setSubmitting(true)
     try {
+      // Pass the access token explicitly so the server can identify the buyer
+      // (more reliable than relying on the session cookie reaching the route).
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) { toast.error('Please sign in again'); setSubmitting(false); router.push('/login?redirect=/checkout'); return }
+
       const res = await fetch('/api/orders/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           items: items.map(i => ({ product_id: i.product.id, quantity: i.quantity })),
           shipping: ship,
