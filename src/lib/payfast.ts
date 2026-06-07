@@ -45,16 +45,29 @@ function formatAmount(cents: number): string {
   return (cents / 100).toFixed(2)
 }
 
+function pfEncode(value: string): string {
+  // Match PHP urlencode (which PayFast uses server-side):
+  // spaces -> '+', and also encode ! ' ( ) * which encodeURIComponent leaves raw.
+  return encodeURIComponent(String(value).trim())
+    .replace(/%20/g, '+')
+    .replace(/!/g, '%21')
+    .replace(/'/g, '%27')
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29')
+    .replace(/\*/g, '%2A')
+    .replace(/~/g, '%7E')
+}
+
 function generateSignature(data: Record<string, string>, passphrase?: string): string {
   // PayFast builds the signature string from the fields in the ORDER they are
-  // submitted (NOT alphabetically sorted), excluding blank values, with spaces
-  // encoded as '+'. The passphrase, if set, is appended LAST.
+  // submitted (NOT alphabetically sorted), excluding blank values. The passphrase,
+  // if set, is appended LAST. Encoding must match PHP urlencode exactly.
   const entries = Object.entries(data)
     .filter(([, v]) => v !== '' && v !== undefined && v !== null)
-    .map(([k, v]) => `${k}=${encodeURIComponent(String(v).trim()).replace(/%20/g, '+')}`)
+    .map(([k, v]) => `${k}=${pfEncode(v)}`)
 
   if (passphrase && passphrase.trim() !== '') {
-    entries.push(`passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, '+')}`)
+    entries.push(`passphrase=${pfEncode(passphrase)}`)
   }
 
   const queryString = entries.join('&')
