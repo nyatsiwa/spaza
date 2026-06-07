@@ -38,8 +38,9 @@ function RegisterForm() {
       return
     }
     toast.success('Account created! 🎉')
-    router.push(redirect)
-    router.refresh()
+    // Hard navigation so the freshly-set auth cookie is sent to the server,
+    // letting middleware-protected routes (e.g. /account) recognise the session.
+    window.location.assign(redirect)
   }
 
   return (
