@@ -106,9 +106,23 @@ export function buildCheckoutPayload(params: PayFastCheckoutParams): {
 
   fields.signature = generateSignature(fields, passphrase)
 
+  // ── TEMP DEBUG: expose exactly what we sign, to diagnose mismatches ──
+  const dbgEntries = Object.entries(fields)
+    .filter(([k, v]) => k !== 'signature' && v !== '' && v !== undefined && v !== null)
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v).trim()).replace(/%20/g, '+')}`)
+  if (passphrase && passphrase.trim() !== '') {
+    dbgEntries.push(`passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, '+')}`)
+  }
+
   return {
     url: PAYFAST_URLS[PAYFAST_ENV as keyof typeof PAYFAST_URLS],
     fields,
+    debug: {
+      merchant_id: merchantId,
+      has_passphrase: !!(passphrase && passphrase.trim() !== ''),
+      base: dbgEntries.join('&'),
+      signature: fields.signature,
+    },
   }
 }
 
