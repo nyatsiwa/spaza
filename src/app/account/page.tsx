@@ -36,6 +36,7 @@ export default function AccountPage() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [seller, setSeller] = useState<{ store_name: string; plan: string; status: string; store_slug: string } | null>(null)
 
   useEffect(() => {
     let active = true
@@ -61,6 +62,16 @@ export default function AccountPage() {
           postal_code:   data.postal_code    || '',
         })
       }
+
+      // Is this user also a seller? (sellers table is the source of truth —
+      // not profiles.role). Drives the store card vs. "become a seller" CTA.
+      const { data: sellerRow } = await supabase
+        .from('sellers')
+        .select('store_name, plan, status, store_slug')
+        .eq('user_id', user.id)
+        .maybeSingle()
+      if (active) setSeller(sellerRow ?? null)
+
       if (active) setLoading(false)
     })()
     return () => { active = false }
@@ -131,6 +142,34 @@ export default function AccountPage() {
         </div>
 
         <div style={{ padding: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {seller ? (
+            <div style={{ border: '1px solid #e6e8eb', borderRadius: 12, padding: 16, background: '#fafbfc', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: 0.5 }}>Your store</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: NAVY }}>{seller.store_name}</div>
+                <div style={{ fontSize: 13, color: '#666', marginTop: 2 }}>
+                  {seller.plan === 'growth' ? 'Growth plan · R70/mo' : 'Free plan'} ·{' '}
+                  <span style={{ textTransform: 'capitalize', color: seller.status === 'active' ? '#1a8f4c' : '#b26a00', fontWeight: 600 }}>{seller.status}</span>
+                </div>
+              </div>
+              <button onClick={() => router.push('/seller/dashboard')}
+                style={{ background: NAVY, color: '#fff', border: 'none', padding: '10px 16px', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                Manage store
+              </button>
+            </div>
+          ) : (
+            <div style={{ border: `1px dashed ${RED}`, borderRadius: 12, padding: 16, background: '#fff7f7', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>Start selling on Spaza</div>
+                <div style={{ fontSize: 13, color: '#666', marginTop: 2 }}>List your products for free — no monthly fee.</div>
+              </div>
+              <button onClick={() => router.push('/sell')}
+                style={{ background: RED, color: '#fff', border: 'none', padding: '10px 16px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                Sell on Spaza
+              </button>
+            </div>
+          )}
+
           <h2 style={{ fontSize: 18, fontWeight: 700, color: NAVY, margin: 0 }}>Shipping details</h2>
           <p style={{ fontSize: 13, color: '#666', marginTop: -8 }}>We use this to deliver your orders.</p>
 
