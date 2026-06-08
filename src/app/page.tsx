@@ -19,6 +19,7 @@ interface ApiProduct {
   id: string
   name: string
   price_cents: number
+  compare_price_cents: number | null
   images: string[] | null
   seller_id: string
   sellers?: { store_name: string } | null
@@ -59,7 +60,7 @@ export default function HomePage() {
       if (active) setAuthed(!!data.user)
 
       const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/products`
-        + `?select=id,name,price_cents,images,seller_id,sellers(store_name)`
+        + `?select=id,name,price_cents,compare_price_cents,images,seller_id,sellers(store_name)`
         + `&status=eq.active&order=created_at.desc`
       try {
         const res = await fetch(url, {
@@ -163,7 +164,17 @@ export default function HomePage() {
                   <div style={{ padding: 16, display: 'flex', flexDirection: 'column', flex: 1 }}>
                     <div style={{ fontSize: 12, color: C.g400, marginBottom: 4 }}>{p.sellers?.store_name || 'Eden Extract'}</div>
                     <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, flex: 1 }}>{p.name}</div>
-                    <div style={{ fontFamily: 'var(--font-bebas)', color: C.red, fontSize: 24, letterSpacing: 0.5 }}>{money(p.price_cents)}</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontFamily: 'var(--font-bebas)', color: C.red, fontSize: 24, letterSpacing: 0.5 }}>{money(p.price_cents)}</span>
+                      {p.compare_price_cents && p.compare_price_cents > p.price_cents && (
+                        <>
+                          <span style={{ fontSize: 13, color: C.g400, textDecoration: 'line-through' }}>{money(p.compare_price_cents)}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: C.green, borderRadius: 6, padding: '2px 6px' }}>
+                            {Math.round((1 - p.price_cents / p.compare_price_cents) * 100)}% OFF
+                          </span>
+                        </>
+                      )}
+                    </div>
                     <button onClick={() => handleAdd(p)} style={{ marginTop: 12, width: '100%', background: C.red, color: '#fff', border: 'none', padding: 10, borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Add to Cart</button>
                   </div>
                 </div>

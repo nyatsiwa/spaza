@@ -8,16 +8,22 @@ import { createClient } from '@/lib/supabase'
 const NAVY = '#0A1628'
 const RED = '#D6001C'
 const GOLD = '#F5A623'
+const GREEN = '#00A651'
 
 interface SellerInfo { id: string; store_name: string; plan: string; status: string }
 interface Product {
-  id: string; name: string; price_cents: number; stock_qty: number | null;
-  status: string; images: string[] | null; created_at: string
+  id: string; name: string; price_cents: number; compare_price_cents: number | null;
+  stock_qty: number | null; status: string; images: string[] | null; created_at: string
 }
 interface Limits { products: number; photos: number }
 
 const money = (cents: number) =>
   'R ' + (cents / 100).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+function pctOff(price: number, base: number | null): number | null {
+  if (!base || base <= price) return null
+  return Math.round((1 - price / base) * 100)
+}
 
 export default function SellerDashboard() {
   const router = useRouter()
@@ -32,10 +38,19 @@ export default function SellerDashboard() {
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
+  const [base, setBase] = useState('')
   const [stock, setStock] = useState('')
   const [description, setDescription] = useState('')
   const [imageUrls, setImageUrls] = useState<string[]>([''])
   const [saving, setSaving] = useState(false)
+
+  // inline edit state (one product at a time)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [ePrice, setEPrice] = useState('')
+  const [eBase, setEBase] = useState('')
+  const [eStock, setEStock] = useState('')
+  const [eStatus, setEStatus] = useState<'active' | 'draft'>('active')
+  const [eSaving, setESaving] = useState(false)
 
   async function authHeaders(): Promise<Record<string, string>> {
     const { data } = await supabase.auth.getSession()
@@ -46,7 +61,6 @@ export default function SellerDashboard() {
   async function load() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login?redirect=/seller/dashboard'); return }
-
     try {
       const res = await fetch('/api/seller/products', { headers: { ...(await authHeaders()) } })
       if (res.status === 403) { toast.error('You are not a seller yet'); router.push('/sell'); return }
@@ -63,24 +77,23 @@ export default function SellerDashboard() {
 
   useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [])
 
-  function setUrl(i: number, v: string) {
-    setImageUrls(prev => prev.map((u, idx) => (idx === i ? v : u)))
-  }
+  // ----- add form helpers -----
+  function setUrl(i: number, v: string) { setImageUrls(prev => prev.map((u, idx) => (idx === i ? v : u))) }
   function addUrlField() {
     if (imageUrls.length >= limits.photos) { toast.error(`Your ${seller?.plan} plan allows ${limits.photos} photos`); return }
     setImageUrls(prev => [...prev, ''])
   }
-  function removeUrlField(i: number) {
-    setImageUrls(prev => prev.filter((_, idx) => idx !== i))
-  }
+  function removeUrlField(i: number) { setImageUrls(prev => prev.filter((_, idx) => idx !== i)) }
   function resetForm() {
-    setName(''); setPrice(''); setStock(''); setDescription(''); setImageUrls(['']); setShowForm(false)
+    setName(''); setPrice(''); setBase(''); setStock(''); setDescription(''); setImageUrls(['']); setShowForm(false)
   }
 
   async function handleCreate() {
     if (!name.trim()) return toast.error('Enter a product name')
     const priceNum = parseFloat(price)
-    if (!priceNum || priceNum <= 0) return toast.error('Enter a valid price')
+    if (!priceNum || priceNum <= 0) return toast.error('Enter a valid selling price')
+    const baseNum = base.trim() ? parseFloat(base) : null
+    if (baseNum !== null && (!baseNum || baseNum <= priceNum)) return toast.error('Base price must be higher than the selling price (or leave it blank)')
 
     setSaving(true)
     const images = imageUrls.map(u => u.trim()).filter(Boolean)
@@ -89,11 +102,8 @@ export default function SellerDashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({
-          name: name.trim(),
-          priceRands: priceNum,
-          stockQty: parseInt(stock) || 0,
-          description: description.trim(),
-          images,
+          name: name.trim(), priceRands: priceNum, baseRands: baseNum,
+          stockQty: parseInt(stock) || 0, description: description.trim(), images,
         }),
       })
       const json = await res.json().catch(() => ({}))
@@ -101,10 +111,40 @@ export default function SellerDashboard() {
       toast.success('Product added ✓')
       setProducts(prev => [json.product, ...prev])
       resetForm()
-    } catch {
-      toast.error('Could not add product')
-    }
+    } catch { toast.error('Could not add product') }
     setSaving(false)
+  }
+
+  // ----- edit helpers -----
+  function startEdit(p: Product) {
+    setEditId(p.id)
+    setEPrice((p.price_cents / 100).toString())
+    setEBase(p.compare_price_cents ? (p.compare_price_cents / 100).toString() : '')
+    setEStock((p.stock_qty ?? 0).toString())
+    setEStatus(p.status === 'draft' ? 'draft' : 'active')
+  }
+  function cancelEdit() { setEditId(null) }
+
+  async function handleUpdate(id: string) {
+    const priceNum = parseFloat(ePrice)
+    if (!priceNum || priceNum <= 0) return toast.error('Enter a valid selling price')
+    const baseNum = eBase.trim() ? parseFloat(eBase) : null
+    if (baseNum !== null && (!baseNum || baseNum <= priceNum)) return toast.error('Base price must be higher than the selling price (or leave it blank)')
+
+    setESaving(true)
+    try {
+      const res = await fetch('/api/seller/products', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({ id, sellingRands: priceNum, baseRands: baseNum, stockQty: parseInt(eStock) || 0, status: eStatus }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { toast.error(json.error || 'Could not update product'); setESaving(false); return }
+      toast.success('Product updated ✓')
+      setProducts(prev => prev.map(p => (p.id === id ? json.product : p)))
+      setEditId(null)
+    } catch { toast.error('Could not update product') }
+    setESaving(false)
   }
 
   if (loading) {
@@ -112,6 +152,8 @@ export default function SellerDashboard() {
   }
 
   const atLimit = products.length >= limits.products
+  const liveAddPct = pctOff(parseFloat(price) || 0, base.trim() ? parseFloat(base) : null)
+  const liveEditPct = pctOff(parseFloat(ePrice) || 0, eBase.trim() ? parseFloat(eBase) : null)
 
   return (
     <div style={{ minHeight: '100vh', background: '#f4f5f7' }}>
@@ -152,8 +194,7 @@ export default function SellerDashboard() {
         {/* add product */}
         <div style={{ marginBottom: 20 }}>
           {!showForm ? (
-            <button
-              onClick={() => { if (atLimit) { toast.error(`You've reached your ${limits.products}-product limit`); return } setShowForm(true) }}
+            <button onClick={() => { if (atLimit) { toast.error(`You've reached your ${limits.products}-product limit`); return } setShowForm(true) }}
               style={{ background: atLimit ? '#bbb' : RED, color: '#fff', border: 'none', padding: '12px 20px', borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: atLimit ? 'not-allowed' : 'pointer' }}>
               + Add a product
             </button>
@@ -163,15 +204,18 @@ export default function SellerDashboard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <Field label="Product name" value={name} onChange={setName} placeholder="Soursop Powder 50g" />
                 <div style={{ display: 'flex', gap: 12 }}>
-                  <div style={{ flex: 1 }}><Field label="Price (R)" value={price} onChange={setPrice} placeholder="149.00" type="number" /></div>
+                  <div style={{ flex: 1 }}><Field label="Selling price (R)" value={price} onChange={setPrice} placeholder="149.00" type="number" /></div>
+                  <div style={{ flex: 1 }}><Field label="Base price (R, optional)" value={base} onChange={setBase} placeholder="199.00" type="number" /></div>
                   <div style={{ flex: 1 }}><Field label="Stock quantity" value={stock} onChange={setStock} placeholder="20" type="number" /></div>
                 </div>
+                {liveAddPct !== null && (
+                  <div style={{ fontSize: 13, color: GREEN, fontWeight: 700 }}>{liveAddPct}% off — buyers see the base price struck through.</div>
+                )}
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Description (optional)</span>
                   <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="Describe your product…"
                     style={{ padding: '12px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 15, outline: 'none', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }} />
                 </label>
-
                 <div>
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Photo URLs (up to {limits.photos})</span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
@@ -179,18 +223,13 @@ export default function SellerDashboard() {
                       <div key={i} style={{ display: 'flex', gap: 8 }}>
                         <input value={u} onChange={e => setUrl(i, e.target.value)} placeholder="https://…/photo.jpg"
                           style={{ flex: 1, padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14, outline: 'none' }} />
-                        {imageUrls.length > 1 && (
-                          <button onClick={() => removeUrlField(i)} style={{ background: '#eee', border: 'none', borderRadius: 8, padding: '0 12px', cursor: 'pointer' }}>×</button>
-                        )}
+                        {imageUrls.length > 1 && <button onClick={() => removeUrlField(i)} style={{ background: '#eee', border: 'none', borderRadius: 8, padding: '0 12px', cursor: 'pointer' }}>×</button>}
                       </div>
                     ))}
                   </div>
-                  {imageUrls.length < limits.photos && (
-                    <button onClick={addUrlField} style={{ marginTop: 8, background: 'none', border: `1px dashed ${RED}`, color: RED, borderRadius: 8, padding: '8px 12px', fontSize: 13, cursor: 'pointer' }}>+ Add another photo</button>
-                  )}
+                  {imageUrls.length < limits.photos && <button onClick={addUrlField} style={{ marginTop: 8, background: 'none', border: `1px dashed ${RED}`, color: RED, borderRadius: 8, padding: '8px 12px', fontSize: 13, cursor: 'pointer' }}>+ Add another photo</button>}
                   <p style={{ fontSize: 12, color: '#999', marginTop: 6 }}>Paste image links for now. (Photo upload coming next.)</p>
                 </div>
-
                 <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
                   <button onClick={handleCreate} disabled={saving}
                     style={{ background: RED, color: '#fff', border: 'none', padding: '12px 20px', borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}>
@@ -209,22 +248,61 @@ export default function SellerDashboard() {
           <div style={{ background: '#fff', borderRadius: 14, padding: 40, textAlign: 'center', color: '#999' }}>No products yet. Add your first one above.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {products.map(p => (
-              <div key={p.id} style={{ background: '#fff', borderRadius: 12, padding: 12, display: 'flex', alignItems: 'center', gap: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-                <div style={{ width: 56, height: 56, borderRadius: 8, background: '#f0f1f4', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
-                  {p.images && p.images.length
-                    ? <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    : <span style={{ fontSize: 24 }}>🛒</span>}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, color: NAVY, fontSize: 14 }}>{p.name}</div>
-                  <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
-                    Stock: {p.stock_qty ?? 0} · <span style={{ textTransform: 'capitalize', color: p.status === 'active' ? '#1a8f4c' : '#b26a00' }}>{p.status}</span>
+            {products.map(p => {
+              const isEditing = editId === p.id
+              const rowPct = pctOff(p.price_cents, p.compare_price_cents)
+              return (
+                <div key={p.id} style={{ background: '#fff', borderRadius: 12, padding: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <div style={{ width: 56, height: 56, borderRadius: 8, background: '#f0f1f4', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+                      {p.images && p.images.length ? <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 24 }}>🛒</span>}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, color: NAVY, fontSize: 14 }}>{p.name}</div>
+                      <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+                        Stock: {p.stock_qty ?? 0} · <span style={{ textTransform: 'capitalize', color: p.status === 'active' ? '#1a8f4c' : '#b26a00' }}>{p.status === 'draft' ? 'Hidden' : p.status}</span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, justifyContent: 'flex-end' }}>
+                        <span style={{ fontFamily: 'var(--font-bebas)', color: RED, fontSize: 22 }}>{money(p.price_cents)}</span>
+                        {rowPct !== null && <span style={{ fontSize: 12, color: '#aaa', textDecoration: 'line-through' }}>{money(p.compare_price_cents!)}</span>}
+                      </div>
+                      {rowPct !== null && <div style={{ fontSize: 11, color: GREEN, fontWeight: 700 }}>{rowPct}% off</div>}
+                    </div>
+                    {!isEditing && (
+                      <button onClick={() => startEdit(p)} style={{ marginLeft: 6, background: 'none', border: `1px solid ${NAVY}33`, color: NAVY, borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Edit</button>
+                    )}
                   </div>
+
+                  {isEditing && (
+                    <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #eee' }}>
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ flex: '1 1 120px' }}><Field label="Selling price (R)" value={ePrice} onChange={setEPrice} type="number" /></div>
+                        <div style={{ flex: '1 1 120px' }}><Field label="Base price (R, optional)" value={eBase} onChange={setEBase} type="number" /></div>
+                        <div style={{ flex: '1 1 100px' }}><Field label="Stock" value={eStock} onChange={setEStock} type="number" /></div>
+                        <label style={{ flex: '1 1 120px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Visibility</span>
+                          <select value={eStatus} onChange={e => setEStatus(e.target.value as 'active' | 'draft')}
+                            style={{ padding: '12px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 15, outline: 'none', background: '#fff' }}>
+                            <option value="active">Active (visible)</option>
+                            <option value="draft">Hidden</option>
+                          </select>
+                        </label>
+                      </div>
+                      {liveEditPct !== null && <div style={{ fontSize: 13, color: GREEN, fontWeight: 700, marginTop: 10 }}>{liveEditPct}% off</div>}
+                      <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+                        <button onClick={() => handleUpdate(p.id)} disabled={eSaving}
+                          style={{ background: RED, color: '#fff', border: 'none', padding: '10px 18px', borderRadius: 9, fontWeight: 700, fontSize: 14, cursor: eSaving ? 'default' : 'pointer', opacity: eSaving ? 0.7 : 1 }}>
+                          {eSaving ? 'Saving…' : 'Save changes'}
+                        </button>
+                        <button onClick={cancelEdit} style={{ background: 'none', border: '1px solid #ccc', color: '#555', padding: '10px 18px', borderRadius: 9, fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div style={{ fontFamily: 'var(--font-bebas)', color: RED, fontSize: 22 }}>{money(p.price_cents)}</div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
