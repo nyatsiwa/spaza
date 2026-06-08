@@ -83,17 +83,6 @@ export default function CheckoutPage() {
       const data = await res.json()
       if (!res.ok) { toast.error(data.error || 'Checkout failed'); setSubmitting(false); return }
 
-      // ── TEMP DEBUG: show what we're sending to PayFast instead of redirecting ──
-      if (data.payfast?.debug) {
-        const d = data.payfast.debug
-        window.prompt(
-          'Copy this whole text and send it (Ctrl+A then Ctrl+C):',
-          'merchant_id=' + d.merchant_id + ' | has_passphrase=' + d.has_passphrase + ' | signature=' + d.signature + ' || BASE: ' + d.base
-        )
-        setSubmitting(false)
-        return
-      }
-
       // Auto-submit a form to PayFast (redirects the browser to the payment page)
       const { url, fields } = data.payfast as { url: string; fields: Record<string, string> }
       const form = document.createElement('form')

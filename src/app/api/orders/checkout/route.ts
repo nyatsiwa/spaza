@@ -150,8 +150,8 @@ export async function POST(request: Request) {
       amountCents: totalCents,
       buyerEmail: user.email || '',
       buyerName: shipping.name,
-      itemName: orderItems.length === 1 ? orderItems[0].product_name : `Spaza order ${order.order_number}`,
-      itemDesc: `${orderItems.length} item(s) from Spaza`,
+      itemName: `Spaza-Order-${order.order_number}`,
+      itemDesc: `Spaza-Order-${order.order_number}`,
     })
 
     // 10. Return the PayFast URL + fields for the client to POST
