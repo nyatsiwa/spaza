@@ -20,6 +20,7 @@ interface ApiProduct {
   name: string
   price_cents: number
   compare_price_cents: number | null
+  stock_qty: number | null
   images: string[] | null
   seller_id: string
   sellers?: { store_name: string } | null
@@ -60,7 +61,7 @@ export default function HomePage() {
       if (active) setAuthed(!!data.user)
 
       const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/products`
-        + `?select=id,name,price_cents,compare_price_cents,images,seller_id,sellers(store_name)`
+        + `?select=id,name,price_cents,compare_price_cents,stock_qty,images,seller_id,sellers(store_name)`
         + `&status=eq.active&order=created_at.desc`
       try {
         const res = await fetch(url, {
@@ -158,6 +159,8 @@ export default function HomePage() {
               const img = p.images && p.images.length
                 ? <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 : <span style={{ fontSize: 56 }}>{emojiFor(p.name)}</span>
+              const stock = p.stock_qty ?? 0
+              const out = stock <= 0
               return (
                 <div key={p.id} style={{ background: '#fff', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ height: 180, background: C.g100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{img}</div>
@@ -175,7 +178,15 @@ export default function HomePage() {
                         </>
                       )}
                     </div>
-                    <button onClick={() => handleAdd(p)} style={{ marginTop: 12, width: '100%', background: C.red, color: '#fff', border: 'none', padding: 10, borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Add to Cart</button>
+                    {out
+                      ? <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: C.red }}>Out of stock</div>
+                      : stock <= 5
+                        ? <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: C.gold }}>Only {stock} left</div>
+                        : null}
+                    <button onClick={() => handleAdd(p)} disabled={out}
+                      style={{ marginTop: out || stock <= 5 ? 6 : 12, width: '100%', background: out ? '#c9ccd2' : C.red, color: '#fff', border: 'none', padding: 10, borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: out ? 'not-allowed' : 'pointer' }}>
+                      {out ? 'Sold out' : 'Add to Cart'}
+                    </button>
                   </div>
                 </div>
               )

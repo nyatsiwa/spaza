@@ -143,6 +143,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Could not save order items.' }, { status: 500 })
     }
 
+    // 8b. Atomically decrement stock (guards against overselling). The DB
+    // function is all-or-nothing: if any item lacks stock it raises and rolls
+    // back every decrement. If it fails, undo the order we just created so we
+    // never leave a phantom order that can't be fulfilled.
+    const decrementItems = orderItems.map(it => ({ product_id: it.product_id, qty: it.quantity }))
+    const { error: stockErr } = await admin.rpc('purchase_decrement_stock', { items: decrementItems })
+    if (stockErr) {
+      await admin.from('order_items').delete().eq('order_id', order.id)
+      await admin.from('orders').delete().eq('id', order.id)
+      const oversold = (stockErr.message || '').includes('insufficient_stock')
+      return NextResponse.json(
+        {
+          error: oversold
+            ? "Sorry — one of your items just sold out or doesn't have enough stock. Please review your cart."
+            : 'Could not reserve stock. Please try again.',
+        },
+        { status: oversold ? 409 : 500 }
+      )
+    }
+
     // 9. Build PayFast payload
     const payload = buildCheckoutPayload({
       orderId: order.id,
