@@ -98,6 +98,7 @@ export default function HomePage() {
         <div style={{ maxWidth: 1320, margin: 'auto', padding: '0 20px', display: 'flex', justifyContent: 'space-between' }}>
           <span>📦 Delivering Nationwide · South Africa</span>
           <span style={{ display: 'flex', gap: 20 }}>
+            <a href="/sell" style={{ color: C.gold, textDecoration: 'none', fontWeight: 600 }}>Sell on Spaza</a>
             <a href="/account" style={{ color: C.g400, textDecoration: 'none' }}>Track My Order</a>
             <span>Help &amp; Support</span>
           </span>
