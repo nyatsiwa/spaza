@@ -29,9 +29,19 @@ interface OrderRow {
 interface AcctRow {
   seller_id: string; store_name: string; gross_cents: number; commission_cents: number; payout_cents: number; line_items: number
 }
+interface PayoutPeriod {
+  period_start: string; period_end: string; label: string; amount_cents: number; paid: boolean; paid_at: string | null; due: boolean
+}
+interface PayoutSeller {
+  seller_id: string; store_name: string; periods: PayoutPeriod[]
+}
 interface Data {
   products: ProductRow[]; pending: ProductRow[]; sellers: SellerRow[]; orders: OrderRow[];
-  accounting: { totals: { gross_cents: number; commission_cents: number; payout_cents: number }; bySeller: AcctRow[] }
+  accounting: {
+    totals: { gross_cents: number; commission_cents: number; payout_cents: number };
+    bySeller: AcctRow[];
+    payouts: PayoutSeller[];
+  }
 }
 
 type Tab = 'pending' | 'products' | 'sellers' | 'orders' | 'accounting'
@@ -95,6 +105,14 @@ export default function AdminDashboard() {
   function setProductStatus(id: string, status: string) { act({ action: 'set_product_status', productId: id, status }, 'p' + id) }
   function suspendSeller(id: string) { if (confirm('Suspend this seller? Their products stay but they are flagged suspended.')) act({ action: 'suspend_seller', sellerId: id }, 's' + id) }
   function activateSeller(id: string) { act({ action: 'activate_seller', sellerId: id }, 's' + id) }
+  function payPayout(p: PayoutSeller, period: PayoutPeriod) {
+    if (!confirm(`Mark ${money(period.amount_cents)} to ${p.store_name} for ${period.label} as PAID?\n\nThis records the payout — make the actual EFT separately.`)) return
+    act({ action: 'pay_payout', sellerId: p.seller_id, periodStart: period.period_start, periodEnd: period.period_end, amountCents: period.amount_cents }, 'pay' + p.seller_id + period.period_start)
+  }
+  function unpayPayout(p: PayoutSeller, period: PayoutPeriod) {
+    if (!confirm(`Undo the paid mark for ${p.store_name} · ${period.label}?`)) return
+    act({ action: 'unpay_payout', sellerId: p.seller_id, periodStart: period.period_start }, 'pay' + p.seller_id + period.period_start)
+  }
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>Loading admin…</div>
   if (!data) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>No data.</div>
@@ -222,19 +240,34 @@ export default function AdminDashboard() {
               <Stat label="Commission earned" value={money(data.accounting.totals.commission_cents)} color={GREEN} />
               <Stat label="Owed to sellers (payouts)" value={money(data.accounting.totals.payout_cents)} color={NAVY} />
             </div>
-            <h3 style={{ color: NAVY, fontSize: 15, margin: '0 0 10px' }}>By seller</h3>
-            {data.accounting.bySeller.length === 0
+            <h3 style={{ color: NAVY, fontSize: 15, margin: '0 0 10px' }}>Payout schedule (per seller · 1st–14th and 15th–end)</h3>
+            {data.accounting.payouts.length === 0
               ? <Empty text="No sales recorded yet." />
-              : <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', padding: '10px 14px', background: '#f0f1f4', fontSize: 12, fontWeight: 700, color: '#666' }}>
-                    <span>Store</span><span>Gross</span><span>Commission</span><span>Payout owed</span>
-                  </div>
-                  {data.accounting.bySeller.map(r => (
-                    <div key={r.seller_id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', padding: '10px 14px', borderTop: '1px solid #f0f1f4', fontSize: 13 }}>
-                      <span style={{ fontWeight: 600, color: NAVY }}>{r.store_name}</span>
-                      <span>{money(r.gross_cents)}</span>
-                      <span style={{ color: GREEN }}>{money(r.commission_cents)}</span>
-                      <span style={{ color: NAVY }}>{money(r.payout_cents)}</span>
+              : <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {data.accounting.payouts.map(ps => (
+                    <div key={ps.seller_id} style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                      <div style={{ padding: '12px 14px', background: '#f0f1f4', fontWeight: 700, color: NAVY }}>{ps.store_name}</div>
+                      {ps.periods.map(per => (
+                        <div key={per.period_start} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderTop: '1px solid #f0f1f4', flexWrap: 'wrap' }}>
+                          <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: NAVY }}>{per.label}</div>
+                            <div style={{ fontSize: 12, marginTop: 2 }}>
+                              {per.paid
+                                ? <span style={{ color: GREEN, fontWeight: 700 }}>Paid{per.paid_at ? ' · ' + new Date(per.paid_at).toLocaleDateString('en-ZA') : ''}</span>
+                                : per.due
+                                  ? <span style={{ color: RED, fontWeight: 700 }}>Due now</span>
+                                  : <span style={{ color: '#888' }}>Current period (still accruing)</span>}
+                            </div>
+                          </div>
+                          <div style={{ fontFamily: 'var(--font-bebas)', color: NAVY, fontSize: 22, minWidth: 110, textAlign: 'right' }}>{money(per.amount_cents)}</div>
+                          {per.paid
+                            ? <button disabled={busy === 'pay' + ps.seller_id + per.period_start} onClick={() => unpayPayout(ps, per)} style={btnGhost('#888')}>Undo</button>
+                            : <button disabled={busy === 'pay' + ps.seller_id + per.period_start || !per.due} onClick={() => payPayout(ps, per)}
+                                style={{ background: per.due ? GREEN : '#cfd3da', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: per.due ? 'pointer' : 'not-allowed' }}>
+                                Pay
+                              </button>}
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>}
