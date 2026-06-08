@@ -15,26 +15,21 @@ export const PAYFAST_ITN_URLS = {
 
 // ─── PLAN PRICING (cents) ─────────────────────────────────────
 export const SELLER_PLANS = {
-  basic: {
-    name:           'Basic',
-    amount_cents:   19900,     // R199.00
-    commission:     0.05,      // 5%
-    listing_limit:  50,
-    payout_schedule: 'weekly',
+  free: {
+    name:            'Free',
+    amount_cents:    0,         // R0.00 — no subscription payment
+    commission:      0.08,      // 8%
+    listing_limit:   5,
+    photo_limit:     2,
+    payout_schedule: 'biweekly',
   },
-  pro: {
-    name:           'Pro',
-    amount_cents:   69900,     // R699.00
-    commission:     0.035,     // 3.5%
-    listing_limit:  null,      // unlimited
-    payout_schedule: 'daily',
-  },
-  elite: {
-    name:           'Elite',
-    amount_cents:   199900,    // R1,999.00
-    commission:     0.025,     // 2.5%
-    listing_limit:  null,
-    payout_schedule: 'instant',
+  growth: {
+    name:            'Growth',
+    amount_cents:    7000,      // R70.00 / month
+    commission:      0.05,      // 5%
+    listing_limit:   10,
+    photo_limit:     3,
+    payout_schedule: 'biweekly',
   },
 } as const
 
@@ -223,8 +218,11 @@ export async function verifyITN(itnData: Record<string, string>): Promise<boolea
 }
 
 // ─── COMMISSION CALCULATOR ────────────────────────────────────
-export function calculateCommission(amountCents: number, plan: SellerPlan) {
-  const rate = SELLER_PLANS[plan].commission
+export function calculateCommission(amountCents: number, plan: SellerPlan | string) {
+  // Fall back to the Free rate (8%) for any unknown or legacy plan value,
+  // so checkout never breaks even if a seller row still has an old plan.
+  const planConfig = SELLER_PLANS[plan as SellerPlan] ?? SELLER_PLANS.free
+  const rate = planConfig.commission
   const commissionCents = Math.round(amountCents * rate)
   const payoutCents = amountCents - commissionCents
   return { commissionCents, payoutCents, rate }
