@@ -20,6 +20,28 @@ import {
 
 const COMMISSION_RATE: Record<string, number> = { free: 0.08, growth: 0.05 };
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Bucket a timestamp into a calendar half-month period (1–14 or 15–end). */
+function halfMonth(ts: string): { start: string; end: string } {
+  const d = new Date(ts);
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth(); // 0-11
+  const day = d.getUTCDate();
+  const firstHalf = day <= 14;
+  const startDay = firstHalf ? 1 : 15;
+  const endDate = firstHalf ? new Date(Date.UTC(y, m, 14)) : new Date(Date.UTC(y, m + 1, 0));
+  const iso = (dt: Date) => dt.toISOString().slice(0, 10);
+  return { start: iso(new Date(Date.UTC(y, m, startDay))), end: iso(endDate) };
+}
+
+/** "1–14 Jun 2026" / "15–30 Jun 2026" */
+function periodLabel(startISO: string, endISO: string): string {
+  const s = new Date(startISO);
+  const e = new Date(endISO);
+  return `${s.getUTCDate()}–${e.getUTCDate()} ${MONTHS[s.getUTCMonth()]} ${s.getUTCFullYear()}`;
+}
+
 async function resolveAdmin(req: Request) {
   const admin = createAdminClient();
 
@@ -80,10 +102,14 @@ export async function GET(req: Request) {
     // because PayFast settlement isn't wired yet. Labelled as such in the UI.
     const { data: items } = await admin
       .from("order_items")
-      .select("seller_id, total_cents, commission_cents, seller_payout_cents");
+      .select("seller_id, total_cents, commission_cents, seller_payout_cents, orders(created_at)");
 
     const bySeller = new Map<string, { gross: number; commission: number; payout: number; units: number }>();
     let grossAll = 0, commissionAll = 0, payoutAll = 0;
+
+    // half-month payout buckets: key `${seller_id}|${period_start}`
+    const buckets = new Map<string, { seller_id: string; start: string; end: string; amount: number }>();
+
     (items ?? []).forEach((it: any) => {
       const g = it.total_cents || 0;
       const c = it.commission_cents || 0;
@@ -92,6 +118,16 @@ export async function GET(req: Request) {
       const cur = bySeller.get(it.seller_id) || { gross: 0, commission: 0, payout: 0, units: 0 };
       cur.gross += g; cur.commission += c; cur.payout += p; cur.units += 1;
       bySeller.set(it.seller_id, cur);
+
+      // bucket the seller payout into a half-month period by order date
+      const created = it.orders?.created_at;
+      if (created) {
+        const { start, end } = halfMonth(created);
+        const key = `${it.seller_id}|${start}`;
+        const b = buckets.get(key) || { seller_id: it.seller_id, start, end, amount: 0 };
+        b.amount += p;
+        buckets.set(key, b);
+      }
     });
 
     const storeName = new Map<string, string>();
@@ -106,6 +142,41 @@ export async function GET(req: Request) {
       line_items: v.units,
     })).sort((a, b) => b.gross_cents - a.gross_cents);
 
+    // existing payout records (what's already been marked paid)
+    const { data: paidRows } = await admin
+      .from("seller_payouts")
+      .select("seller_id, period_start, status, paid_at");
+    const paidMap = new Map<string, { status: string; paid_at: string | null }>();
+    (paidRows ?? []).forEach((r: any) =>
+      paidMap.set(`${r.seller_id}|${r.period_start}`, { status: r.status, paid_at: r.paid_at })
+    );
+
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const payoutsBySellerMap = new Map<string, any[]>();
+    Array.from(buckets.values()).forEach((b) => {
+      const key = `${b.seller_id}|${b.start}`;
+      const paidInfo = paidMap.get(key);
+      const paid = paidInfo?.status === "paid";
+      const closed = b.end < todayISO; // period has fully elapsed
+      const list = payoutsBySellerMap.get(b.seller_id) || [];
+      list.push({
+        period_start: b.start,
+        period_end: b.end,
+        label: periodLabel(b.start, b.end),
+        amount_cents: b.amount,
+        paid,
+        paid_at: paidInfo?.paid_at || null,
+        due: !paid && closed && b.amount > 0,
+      });
+      payoutsBySellerMap.set(b.seller_id, list);
+    });
+
+    const payouts = Array.from(payoutsBySellerMap.entries()).map(([sid, periods]) => ({
+      seller_id: sid,
+      store_name: storeName.get(sid) || "(unknown)",
+      periods: periods.sort((a: any, b: any) => (a.period_start < b.period_start ? 1 : -1)),
+    })).sort((a, b) => (a.store_name > b.store_name ? 1 : -1));
+
     return NextResponse.json({
       products: products ?? [],
       pending,
@@ -114,6 +185,7 @@ export async function GET(req: Request) {
       accounting: {
         totals: { gross_cents: grossAll, commission_cents: commissionAll, payout_cents: payoutAll },
         bySeller: accountingRows,
+        payouts,
       },
     });
   } catch (e: any) {
@@ -178,6 +250,35 @@ export async function POST(req: Request) {
         const sellerId = String(body?.sellerId || "");
         if (!sellerId) return NextResponse.json({ error: "Missing sellerId" }, { status: 400 });
         const { error } = await admin.from("sellers").update({ status: "active", updated_at: now }).eq("id", sellerId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ ok: true });
+      }
+      case "pay_payout": {
+        const sellerId = String(body?.sellerId || "");
+        const periodStart = String(body?.periodStart || "");
+        const periodEnd = String(body?.periodEnd || "");
+        const amountCents = Math.max(0, Math.floor(Number(body?.amountCents) || 0));
+        if (!sellerId || !periodStart || !periodEnd)
+          return NextResponse.json({ error: "Missing payout details" }, { status: 400 });
+        const { error } = await admin
+          .from("seller_payouts")
+          .upsert(
+            { seller_id: sellerId, period_start: periodStart, period_end: periodEnd, amount_cents: amountCents, status: "paid", paid_at: now },
+            { onConflict: "seller_id,period_start" }
+          );
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ ok: true });
+      }
+      case "unpay_payout": {
+        const sellerId = String(body?.sellerId || "");
+        const periodStart = String(body?.periodStart || "");
+        if (!sellerId || !periodStart)
+          return NextResponse.json({ error: "Missing payout details" }, { status: 400 });
+        const { error } = await admin
+          .from("seller_payouts")
+          .delete()
+          .eq("seller_id", sellerId)
+          .eq("period_start", periodStart);
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         return NextResponse.json({ ok: true });
       }
