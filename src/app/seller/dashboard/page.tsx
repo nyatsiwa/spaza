@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { createClient } from '@/lib/supabase'
@@ -41,7 +41,9 @@ export default function SellerDashboard() {
   const [base, setBase] = useState('')
   const [stock, setStock] = useState('')
   const [description, setDescription] = useState('')
-  const [imageUrls, setImageUrls] = useState<string[]>([''])
+  const [photoUrls, setPhotoUrls] = useState<string[]>([])
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [saving, setSaving] = useState(false)
 
   // inline edit state (one product at a time)
@@ -78,14 +80,30 @@ export default function SellerDashboard() {
   useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [])
 
   // ----- add form helpers -----
-  function setUrl(i: number, v: string) { setImageUrls(prev => prev.map((u, idx) => (idx === i ? v : u))) }
-  function addUrlField() {
-    if (imageUrls.length >= limits.photos) { toast.error(`Your ${seller?.plan} plan allows ${limits.photos} photos`); return }
-    setImageUrls(prev => [...prev, ''])
+  async function handleFiles(files: FileList | null) {
+    if (!files || !files.length) return
+    const remaining = limits.photos - photoUrls.length
+    if (remaining <= 0) { toast.error(`Your ${seller?.plan} plan allows ${limits.photos} photos`); return }
+    const chosen = Array.from(files).slice(0, remaining)
+    setUploading(true)
+    for (const file of chosen) {
+      if (!file.type.startsWith('image/')) { toast.error(`${file.name} is not an image`); continue }
+      if (file.size > 5 * 1024 * 1024) { toast.error(`${file.name} is larger than 5 MB`); continue }
+      const fd = new FormData()
+      fd.append('file', file)
+      try {
+        const res = await fetch('/api/seller/upload', { method: 'POST', headers: { ...(await authHeaders()) }, body: fd })
+        const json = await res.json().catch(() => ({}))
+        if (!res.ok || !json.url) { toast.error(json.error || `Could not upload ${file.name}`); continue }
+        setPhotoUrls(prev => [...prev, json.url])
+      } catch { toast.error(`Could not upload ${file.name}`) }
+    }
+    setUploading(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
-  function removeUrlField(i: number) { setImageUrls(prev => prev.filter((_, idx) => idx !== i)) }
+  function removePhoto(i: number) { setPhotoUrls(prev => prev.filter((_, idx) => idx !== i)) }
   function resetForm() {
-    setName(''); setPrice(''); setBase(''); setStock(''); setDescription(''); setImageUrls(['']); setShowForm(false)
+    setName(''); setPrice(''); setBase(''); setStock(''); setDescription(''); setPhotoUrls([]); setShowForm(false)
   }
 
   async function handleCreate() {
@@ -96,7 +114,7 @@ export default function SellerDashboard() {
     if (baseNum !== null && (!baseNum || baseNum <= priceNum)) return toast.error('Base price must be higher than the selling price (or leave it blank)')
 
     setSaving(true)
-    const images = imageUrls.map(u => u.trim()).filter(Boolean)
+    const images = photoUrls
     try {
       const res = await fetch('/api/seller/products', {
         method: 'POST',
@@ -217,18 +235,24 @@ export default function SellerDashboard() {
                     style={{ padding: '12px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 15, outline: 'none', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }} />
                 </label>
                 <div>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Photo URLs (up to {limits.photos})</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
-                    {imageUrls.map((u, i) => (
-                      <div key={i} style={{ display: 'flex', gap: 8 }}>
-                        <input value={u} onChange={e => setUrl(i, e.target.value)} placeholder="https://…/photo.jpg"
-                          style={{ flex: 1, padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14, outline: 'none' }} />
-                        {imageUrls.length > 1 && <button onClick={() => removeUrlField(i)} style={{ background: '#eee', border: 'none', borderRadius: 8, padding: '0 12px', cursor: 'pointer' }}>×</button>}
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Photos (up to {limits.photos})</span>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                    {photoUrls.map((u, i) => (
+                      <div key={i} style={{ position: 'relative', width: 80, height: 80, borderRadius: 8, overflow: 'hidden', border: '1px solid #ddd' }}>
+                        <img src={u} alt={`Photo ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <button onClick={() => removePhoto(i)} title="Remove"
+                          style={{ position: 'absolute', top: 2, right: 2, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 13, lineHeight: 1, cursor: 'pointer' }}>×</button>
                       </div>
                     ))}
+                    {photoUrls.length < limits.photos && (
+                      <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                        style={{ width: 80, height: 80, borderRadius: 8, border: `1px dashed ${RED}`, background: '#fff7f7', color: RED, cursor: uploading ? 'default' : 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+                        {uploading ? <span style={{ fontSize: 12 }}>Uploading…</span> : <><span style={{ fontSize: 22, lineHeight: 1 }}>+</span><span style={{ fontSize: 11, fontWeight: 600 }}>Photo</span></>}
+                      </button>
+                    )}
                   </div>
-                  {imageUrls.length < limits.photos && <button onClick={addUrlField} style={{ marginTop: 8, background: 'none', border: `1px dashed ${RED}`, color: RED, borderRadius: 8, padding: '8px 12px', fontSize: 13, cursor: 'pointer' }}>+ Add another photo</button>}
-                  <p style={{ fontSize: 12, color: '#999', marginTop: 6 }}>Paste image links for now. (Photo upload coming next.)</p>
+                  <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={e => handleFiles(e.target.files)} style={{ display: 'none' }} />
+                  <p style={{ fontSize: 12, color: '#999', marginTop: 6 }}>JPG, PNG or WebP · up to 5 MB each.</p>
                 </div>
                 <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
                   <button onClick={handleCreate} disabled={saving}
