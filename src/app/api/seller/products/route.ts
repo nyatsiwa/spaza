@@ -25,7 +25,7 @@ const PLAN_LIMITS: Record<string, { products: number; photos: number }> = {
 };
 
 const PRODUCT_FIELDS =
-  "id, name, price_cents, compare_price_cents, stock_qty, status, images, created_at";
+  "id, name, price_cents, compare_price_cents, stock_qty, status, images, rejection_reason, created_at";
 
 async function resolveSeller(req: Request) {
   const admin = createAdminClient();
@@ -160,8 +160,7 @@ export async function POST(req: Request) {
       compare_price_cents,
       stock_qty: stockQty,
       images,
-      status: "active",
-      published_at: now,
+      status: "pending", // awaits admin approval before going live
       updated_at: now,
     };
     if (description) insert.description = description;
@@ -217,9 +216,24 @@ export async function PATCH(req: Request) {
       ? Math.max(0, Math.floor(Number(body.stockQty)))
       : 0;
 
-    // Active shows on storefront (status=active); "Hidden" uses draft so it
-    // drops out of the storefront's status=eq.active filter without deletion.
-    const status = body?.status === "draft" ? "draft" : "active";
+    // Decide the new status. Sellers may toggle visible/hidden on products that
+    // are already APPROVED (active / draft / out_of_stock), but they cannot
+    // self-approve a product that is pending or rejected — only an admin can
+    // move those to active.
+    const { data: cur } = await admin
+      .from("products")
+      .select("status")
+      .eq("id", id)
+      .eq("seller_id", seller.id)
+      .maybeSingle();
+    if (!cur)
+      return NextResponse.json({ error: "Product not found." }, { status: 404 });
+
+    let status: string = cur.status;
+    if (cur.status === "active" || cur.status === "draft" || cur.status === "out_of_stock") {
+      status = body?.status === "draft" ? "draft" : "active";
+    }
+    // pending / rejected: status left unchanged (no self-approval)
 
     const { data: updated, error: updErr } = await admin
       .from("products")

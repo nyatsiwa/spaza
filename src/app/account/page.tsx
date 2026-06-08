@@ -37,6 +37,7 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [seller, setSeller] = useState<{ store_name: string; plan: string; status: string; store_slug: string } | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -47,7 +48,7 @@ export default function AccountPage() {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('full_name, phone, address_line1, address_line2, city, province, postal_code')
+        .select('full_name, phone, address_line1, address_line2, city, province, postal_code, role')
         .eq('id', user.id)
         .single()
 
@@ -61,6 +62,7 @@ export default function AccountPage() {
           province:      data.province       || '',
           postal_code:   data.postal_code    || '',
         })
+        if (active) setIsAdmin(data.role === 'admin')
       }
 
       // Is this user also a seller? (sellers table is the source of truth —
@@ -166,6 +168,19 @@ export default function AccountPage() {
               <button onClick={() => router.push('/sell')}
                 style={{ background: RED, color: '#fff', border: 'none', padding: '10px 16px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 Sell on Spaza
+              </button>
+            </div>
+          )}
+
+          {isAdmin && (
+            <div style={{ border: `1px solid ${NAVY}`, borderRadius: 12, padding: 16, background: NAVY, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>Admin</div>
+                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', marginTop: 2 }}>Approvals, sellers, orders & accounting.</div>
+              </div>
+              <button onClick={() => router.push('/admin')}
+                style={{ background: '#fff', color: NAVY, border: 'none', padding: '10px 16px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                Open admin
               </button>
             </div>
           )}

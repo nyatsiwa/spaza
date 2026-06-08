@@ -13,7 +13,7 @@ const GREEN = '#00A651'
 interface SellerInfo { id: string; store_name: string; plan: string; status: string }
 interface Product {
   id: string; name: string; price_cents: number; compare_price_cents: number | null;
-  stock_qty: number | null; status: string; images: string[] | null; created_at: string
+  stock_qty: number | null; status: string; images: string[] | null; rejection_reason?: string | null; created_at: string
 }
 interface Limits { products: number; photos: number }
 
@@ -23,6 +23,18 @@ const money = (cents: number) =>
 function pctOff(price: number, base: number | null): number | null {
   if (!base || base <= price) return null
   return Math.round((1 - price / base) * 100)
+}
+
+function statusInfo(status: string): { label: string; color: string } {
+  switch (status) {
+    case 'active': return { label: 'Active', color: '#1a8f4c' }
+    case 'pending': return { label: 'Pending review', color: '#b26a00' }
+    case 'rejected': return { label: 'Rejected', color: '#D6001C' }
+    case 'draft': return { label: 'Hidden', color: '#888' }
+    case 'out_of_stock': return { label: 'Out of stock', color: '#b26a00' }
+    case 'removed': return { label: 'Removed by admin', color: '#888' }
+    default: return { label: status, color: '#666' }
+  }
 }
 
 export default function SellerDashboard() {
@@ -219,6 +231,9 @@ export default function SellerDashboard() {
           ) : (
             <div style={{ background: '#fff', borderRadius: 14, padding: 20, boxShadow: '0 4px 20px rgba(0,0,0,0.06)' }}>
               <h3 style={{ margin: '0 0 16px', color: NAVY, fontSize: 17 }}>New product</h3>
+              <div style={{ fontSize: 12, color: '#7a5b00', background: '#fff7f0', border: `1px solid ${GOLD}55`, borderRadius: 8, padding: '8px 12px', marginBottom: 14 }}>
+                New products are reviewed by our team before they go live. You&apos;ll see status “Pending review” until approved.
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <Field label="Product name" value={name} onChange={setName} placeholder="Soursop Powder 50g" />
                 <div style={{ display: 'flex', gap: 12 }}>
@@ -284,8 +299,11 @@ export default function SellerDashboard() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 600, color: NAVY, fontSize: 14 }}>{p.name}</div>
                       <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
-                        Stock: {p.stock_qty ?? 0} · <span style={{ textTransform: 'capitalize', color: p.status === 'active' ? '#1a8f4c' : '#b26a00' }}>{p.status === 'draft' ? 'Hidden' : p.status}</span>
+                        Stock: {p.stock_qty ?? 0} · <span style={{ fontWeight: 600, color: statusInfo(p.status).color }}>{statusInfo(p.status).label}</span>
                       </div>
+                      {p.status === 'rejected' && p.rejection_reason && (
+                        <div style={{ fontSize: 12, color: RED, marginTop: 2 }}>Reason: {p.rejection_reason}</div>
+                      )}
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, justifyContent: 'flex-end' }}>
@@ -305,14 +323,23 @@ export default function SellerDashboard() {
                         <div style={{ flex: '1 1 120px' }}><Field label="Selling price (R)" value={ePrice} onChange={setEPrice} type="number" /></div>
                         <div style={{ flex: '1 1 120px' }}><Field label="Base price (R, optional)" value={eBase} onChange={setEBase} type="number" /></div>
                         <div style={{ flex: '1 1 100px' }}><Field label="Stock" value={eStock} onChange={setEStock} type="number" /></div>
-                        <label style={{ flex: '1 1 120px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Visibility</span>
-                          <select value={eStatus} onChange={e => setEStatus(e.target.value as 'active' | 'draft')}
-                            style={{ padding: '12px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 15, outline: 'none', background: '#fff' }}>
-                            <option value="active">Active (visible)</option>
-                            <option value="draft">Hidden</option>
-                          </select>
-                        </label>
+                        {(p.status === 'active' || p.status === 'draft' || p.status === 'out_of_stock') ? (
+                          <label style={{ flex: '1 1 120px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Visibility</span>
+                            <select value={eStatus} onChange={e => setEStatus(e.target.value as 'active' | 'draft')}
+                              style={{ padding: '12px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 15, outline: 'none', background: '#fff' }}>
+                              <option value="active">Active (visible)</option>
+                              <option value="draft">Hidden</option>
+                            </select>
+                          </label>
+                        ) : (
+                          <div style={{ flex: '1 1 120px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Status</span>
+                            <div style={{ padding: '12px 14px', border: '1px solid #eee', borderRadius: 10, fontSize: 13, color: statusInfo(p.status).color, fontWeight: 600, background: '#fafbfc' }}>
+                              {statusInfo(p.status).label}
+                            </div>
+                          </div>
+                        )}
                       </div>
                       {liveEditPct !== null && <div style={{ fontSize: 13, color: GREEN, fontWeight: 700, marginTop: 10 }}>{liveEditPct}% off</div>}
                       <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
