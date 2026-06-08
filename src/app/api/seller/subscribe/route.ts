@@ -148,14 +148,22 @@ export async function POST(req: Request) {
 
     // ---- 4. FREE: activate subscription immediately ----------------------
     if (plan === "free") {
+      // Free never bills, but current_period_end / next_billing_date are
+      // NOT NULL in the DB. Use a far-future "forever" sentinel so the row
+      // satisfies the constraint without implying a real charge (amount is 0
+      // and there's no PayFast token, so no billing job will ever touch it).
+      const farFuture = new Date();
+      farFuture.setFullYear(farFuture.getFullYear() + 100);
+      const forever = farFuture.toISOString();
+
       const subData: Record<string, unknown> = {
         seller_id: sellerId,
         plan: "free",
         status: "active",
         amount_cents: 0,
         current_period_start: now,
-        current_period_end: null, // free plan: no billing period
-        next_billing_date: null, // free plan: never billed
+        current_period_end: forever, // free plan: never expires
+        next_billing_date: forever, // free plan: never billed
         cancelled_at: null,
         updated_at: now,
       };
