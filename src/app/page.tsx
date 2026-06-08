@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { useCartStore } from '@/lib/store/cart'
 import { createClient } from '@/lib/supabase'
 
@@ -163,10 +164,10 @@ export default function HomePage() {
               const out = stock <= 0
               return (
                 <div key={p.id} style={{ background: '#fff', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ height: 180, background: C.g100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{img}</div>
+                  <Link href={`/product/${p.id}`} style={{ height: 180, background: C.g100, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>{img}</Link>
                   <div style={{ padding: 16, display: 'flex', flexDirection: 'column', flex: 1 }}>
                     <div style={{ fontSize: 12, color: C.g400, marginBottom: 4 }}>{p.sellers?.store_name || 'Eden Extract'}</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, flex: 1 }}>{p.name}</div>
+                    <Link href={`/product/${p.id}`} style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, flex: 1, color: 'inherit', textDecoration: 'none' }}>{p.name}</Link>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                       <span style={{ fontFamily: 'var(--font-bebas)', color: C.red, fontSize: 24, letterSpacing: 0.5 }}>{money(p.price_cents)}</span>
                       {p.compare_price_cents && p.compare_price_cents > p.price_cents && (
