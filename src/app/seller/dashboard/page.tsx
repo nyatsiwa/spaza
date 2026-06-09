@@ -69,6 +69,8 @@ export default function SellerDashboard() {
   const [products, setProducts] = useState<Product[]>([])
   const [limits, setLimits] = useState<Limits>({ products: 5, photos: 2 })
   const [orders, setOrders] = useState<SellerOrder[]>([])
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
+  const [categoryId, setCategoryId] = useState('')
 
   // banking / payout details
   const [bankName, setBankName] = useState('')
@@ -126,6 +128,14 @@ export default function SellerDashboard() {
         const ores = await fetch('/api/seller/orders', { headers: { ...(await authHeaders()) } })
         if (ores.ok) { const oj = await ores.json(); setOrders(oj.orders || []) }
       } catch { /* ignore */ }
+
+      // categories for the product form
+      try {
+        const cres = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/categories?select=id,name&is_active=eq.true&order=sort_order.asc`, {
+          headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!}` },
+        })
+        if (cres.ok) setCategories(await cres.json())
+      } catch { /* ignore */ }
     } catch {
       toast.error('Could not load your store')
     }
@@ -158,7 +168,7 @@ export default function SellerDashboard() {
   }
   function removePhoto(i: number) { setPhotoUrls(prev => prev.filter((_, idx) => idx !== i)) }
   function resetForm() {
-    setName(''); setPrice(''); setBase(''); setStock(''); setDescription(''); setPhotoUrls([]); setShowForm(false)
+    setName(''); setPrice(''); setBase(''); setStock(''); setDescription(''); setPhotoUrls([]); setCategoryId(''); setShowForm(false)
   }
 
   async function handleCreate() {
@@ -176,7 +186,7 @@ export default function SellerDashboard() {
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({
           name: name.trim(), priceRands: priceNum, baseRands: baseNum,
-          stockQty: parseInt(stock) || 0, description: description.trim(), images,
+          stockQty: parseInt(stock) || 0, description: description.trim(), images, categoryId,
         }),
       })
       const json = await res.json().catch(() => ({}))
@@ -360,6 +370,16 @@ export default function SellerDashboard() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <Field label="Product name" value={name} onChange={setName} placeholder="Soursop Powder 50g" />
+                {categories.length > 0 && (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Category</span>
+                    <select value={categoryId} onChange={e => setCategoryId(e.target.value)}
+                      style={{ padding: '12px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 15, outline: 'none', background: '#fff' }}>
+                      <option value="">Select a category…</option>
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </label>
+                )}
                 <div style={{ display: 'flex', gap: 12 }}>
                   <div style={{ flex: 1 }}><Field label="Selling price (R)" value={price} onChange={setPrice} placeholder="149.00" type="number" /></div>
                   <div style={{ flex: 1 }}><Field label="Base price (R, optional)" value={base} onChange={setBase} placeholder="199.00" type="number" /></div>

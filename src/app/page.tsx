@@ -42,6 +42,8 @@ export default function HomePage() {
   const supabase = createClient()
 
   const [products, setProducts] = useState<ApiProduct[]>([])
+  const [search, setSearch] = useState('')
+  const [categories, setCategories] = useState<{ id: string; name: string; slug: string; icon: string | null }[]>([])
   const [loadingProducts, setLoadingProducts] = useState(true)
   const [cartOpen, setCartOpen] = useState(false)
   const [authed, setAuthed] = useState(false)
@@ -78,6 +80,13 @@ export default function HomePage() {
       } finally {
         if (active) setLoadingProducts(false)
       }
+
+      try {
+        const cres = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/categories?select=id,name,slug,icon&is_active=eq.true&order=sort_order.asc`, {
+          headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!}` },
+        })
+        if (cres.ok && active) setCategories(await cres.json())
+      } catch { /* ignore */ }
     })()
     return () => { active = false }
   }, [supabase])
@@ -115,8 +124,8 @@ export default function HomePage() {
             SPA<span style={{ color: C.gold }}>ZA</span>
           </a>
           <div style={{ flex: 1, display: 'flex', maxWidth: 680, borderRadius: 10, overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.2)' }}>
-            <input placeholder="Search millions of products…" style={{ flex: 1, border: 'none', padding: '0 18px', fontSize: 14, outline: 'none', height: 42 }} />
-            <button style={{ background: C.navy, border: 'none', color: '#fff', padding: '0 20px', fontSize: 16, cursor: 'pointer' }}>🔍</button>
+            <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && search.trim()) router.push(`/search?q=${encodeURIComponent(search.trim())}`) }} placeholder="Search products…" style={{ flex: 1, border: 'none', padding: '0 18px', fontSize: 14, outline: 'none', height: 42 }} />
+            <button onClick={() => { if (search.trim()) router.push(`/search?q=${encodeURIComponent(search.trim())}`) }} style={{ background: C.navy, border: 'none', color: '#fff', padding: '0 20px', fontSize: 16, cursor: 'pointer' }}>🔍</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 'auto' }}>
             <a href={authed ? '/account' : '/login'} style={hbtn}>
@@ -133,6 +142,20 @@ export default function HomePage() {
           </div>
         </div>
       </header>
+
+      {/* CATEGORY NAV */}
+      {categories.length > 0 && (
+        <div style={{ background: C.navyMid, borderBottom: `1px solid rgba(255,255,255,0.08)` }}>
+          <div style={{ maxWidth: 1320, margin: 'auto', padding: '0 12px', display: 'flex', gap: 4, overflowX: 'auto' }}>
+            {categories.map(cat => (
+              <a key={cat.id} href={`/category/${cat.slug}`}
+                style={{ color: '#cdd4e0', textDecoration: 'none', fontSize: 13, fontWeight: 600, padding: '12px 12px', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>{cat.icon || '•'}</span>{cat.name}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* HERO */}
       <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, ${C.slate} 100%)`, color: '#fff', padding: '56px 20px' }}>

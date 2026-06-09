@@ -46,6 +46,14 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(true)
   const [active, setActive] = useState(0)
 
+  // reviews
+  const [reviews, setReviews] = useState<{ id: string; rating: number; title: string | null; body: string | null; created_at: string }[]>([])
+  const [canReview, setCanReview] = useState(false)
+  const [myRating, setMyRating] = useState(0)
+  const [myTitle, setMyTitle] = useState('')
+  const [myBody, setMyBody] = useState('')
+  const [submittingReview, setSubmittingReview] = useState(false)
+
   // hover magnifier (desktop)
   const [zoom, setZoom] = useState<React.CSSProperties>({ transform: 'scale(1)' })
 
@@ -71,6 +79,30 @@ export default function ProductDetailPage() {
         })
         const rows = res.ok ? await res.json() : []
         if (on) setProduct(rows[0] || null)
+
+        // approved reviews for this product
+        try {
+          const rres = await fetch(
+            `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/reviews?select=id,rating,title,body,created_at&product_id=eq.${id}&is_approved=eq.true&order=created_at.desc`,
+            { headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!}` } }
+          )
+          if (rres.ok && on) setReviews(await rres.json())
+        } catch { /* ignore */ }
+
+        // can the signed-in user review? (purchased + not yet reviewed)
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          const uid = session?.user?.id
+          const tok = session?.access_token
+          if (uid && tok) {
+            const headers = { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, Authorization: `Bearer ${tok}` }
+            const bought = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/order_items?select=id,orders!inner(buyer_id)&product_id=eq.${id}&orders.buyer_id=eq.${uid}&limit=1`, { headers })
+            const already = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/reviews?select=id&product_id=eq.${id}&buyer_id=eq.${uid}&limit=1`, { headers })
+            const boughtRows = bought.ok ? await bought.json() : []
+            const reviewedRows = already.ok ? await already.json() : []
+            if (on) setCanReview(boughtRows.length > 0 && reviewedRows.length === 0)
+          }
+        } catch { /* ignore */ }
       } catch {
         if (on) setProduct(null)
       } finally {
@@ -127,6 +159,27 @@ export default function ProductDetailPage() {
     addItem({ id: product.id, name: product.name, price_cents: product.price_cents, images, seller_id: product.seller_id })
     toast.success('Added to cart ✓')
   }
+
+  async function submitReview() {
+    if (myRating < 1) return toast.error('Please choose a star rating')
+    setSubmittingReview(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const tok = session?.access_token
+      const res = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+        body: JSON.stringify({ productId: id, rating: myRating, title: myTitle.trim(), body: myBody.trim() }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { toast.error(json.error || 'Could not submit review'); setSubmittingReview(false); return }
+      toast.success('Thanks! Your review will appear once approved.')
+      setCanReview(false); setMyRating(0); setMyTitle(''); setMyBody('')
+    } catch { toast.error('Could not submit review') }
+    setSubmittingReview(false)
+  }
+
+  const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0
 
   if (loading) {
     return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888', background: C.offWhite }}>Loading…</div>
@@ -213,6 +266,58 @@ export default function ProductDetailPage() {
               Go to checkout
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* reviews */}
+      <div style={{ maxWidth: 1100, margin: 'auto', padding: '8px 20px 40px' }}>
+        <div style={{ borderTop: `1px solid ${C.g200}`, paddingTop: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+            <h2 style={{ fontSize: 20, color: C.navy, margin: 0 }}>Reviews</h2>
+            {reviews.length > 0 && (
+              <span style={{ color: C.g600, fontSize: 14 }}>
+                <span style={{ color: C.gold }}>{'★'.repeat(Math.round(avgRating))}{'☆'.repeat(5 - Math.round(avgRating))}</span>{' '}
+                {avgRating.toFixed(1)} · {reviews.length} review{reviews.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
+
+          {canReview && (
+            <div style={{ background: '#fff', borderRadius: 12, padding: 18, boxShadow: '0 2px 12px rgba(0,0,0,0.05)', marginTop: 16 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 10 }}>Write a review</div>
+              <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
+                {[1, 2, 3, 4, 5].map(n => (
+                  <button key={n} onClick={() => setMyRating(n)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 28, lineHeight: 1, color: n <= myRating ? C.gold : '#d6d9e0', padding: 0 }}>★</button>
+                ))}
+              </div>
+              <input value={myTitle} onChange={e => setMyTitle(e.target.value)} placeholder="Title (optional)"
+                style={{ width: '100%', padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14, outline: 'none', boxSizing: 'border-box', marginBottom: 10 }} />
+              <textarea value={myBody} onChange={e => setMyBody(e.target.value)} rows={3} placeholder="Share your experience with this product…"
+                style={{ width: '100%', padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14, outline: 'none', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              <button onClick={submitReview} disabled={submittingReview}
+                style={{ marginTop: 12, background: C.red, color: '#fff', border: 'none', padding: '11px 22px', borderRadius: 9, fontWeight: 700, fontSize: 14, cursor: submittingReview ? 'default' : 'pointer', opacity: submittingReview ? 0.7 : 1 }}>
+                {submittingReview ? 'Submitting…' : 'Submit review'}
+              </button>
+              <p style={{ fontSize: 12, color: C.g400, marginTop: 8 }}>Your review is published after a quick check.</p>
+            </div>
+          )}
+
+          {reviews.length === 0 ? (
+            <p style={{ color: C.g600, marginTop: 16 }}>No reviews yet{canReview ? ' — be the first!' : '.'}</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
+              {reviews.map(r => (
+                <div key={r.id} style={{ background: '#fff', borderRadius: 12, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <span style={{ color: C.gold, fontSize: 16 }}>{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+                    <span style={{ fontSize: 12, color: C.g400 }}>{new Date(r.created_at).toLocaleDateString('en-ZA')} · Verified purchase</span>
+                  </div>
+                  {r.title && <div style={{ fontWeight: 700, color: C.navy, marginTop: 8 }}>{r.title}</div>}
+                  {r.body && <p style={{ fontSize: 14, color: C.g800, margin: '6px 0 0', lineHeight: 1.5 }}>{r.body}</p>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

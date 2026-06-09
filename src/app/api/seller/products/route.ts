@@ -25,7 +25,7 @@ const PLAN_LIMITS: Record<string, { products: number; photos: number }> = {
 };
 
 const PRODUCT_FIELDS =
-  "id, name, price_cents, compare_price_cents, stock_qty, status, images, rejection_reason, created_at";
+  "id, name, price_cents, compare_price_cents, stock_qty, status, images, rejection_reason, category_id, created_at";
 
 async function resolveSeller(req: Request) {
   const admin = createAdminClient();
@@ -178,6 +178,8 @@ export async function POST(req: Request) {
       updated_at: now,
     };
     if (description) insert.description = description;
+    const categoryId = String(body?.categoryId || "").trim();
+    if (categoryId) insert.category_id = categoryId;
 
     const { data: created, error: insErr } = await admin
       .from("products")
@@ -256,6 +258,9 @@ export async function PATCH(req: Request) {
         compare_price_cents,
         stock_qty: stockQty,
         status,
+        ...(typeof body?.categoryId === "string" && body.categoryId.trim()
+          ? { category_id: body.categoryId.trim() }
+          : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)

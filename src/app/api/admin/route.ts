@@ -84,6 +84,13 @@ export async function GET(req: Request) {
 
     const pending = (products ?? []).filter((p: any) => p.status === "pending");
 
+    // ---- pending reviews (awaiting approval) ----
+    const { data: pendingReviews } = await admin
+      .from("reviews")
+      .select("id, product_id, rating, title, body, created_at, products(name)")
+      .eq("is_approved", false)
+      .order("created_at", { ascending: false });
+
     // ---- all sellers ----
     const { data: sellers } = await admin
       .from("sellers")
@@ -190,6 +197,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       products: products ?? [],
       pending,
+      pendingReviews: pendingReviews ?? [],
       sellers: sellers ?? [],
       orders: orders ?? [],
       accounting: {
@@ -289,6 +297,27 @@ export async function POST(req: Request) {
           .delete()
           .eq("seller_id", sellerId)
           .eq("period_start", periodStart);
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ ok: true });
+      }
+      case "approve_review": {
+        const reviewId = String(body?.reviewId || "");
+        if (!reviewId) return NextResponse.json({ error: "Missing reviewId" }, { status: 400 });
+        const { data: rev, error: e1 } = await admin
+          .from("reviews").update({ is_approved: true }).eq("id", reviewId).select("product_id").single();
+        if (e1 || !rev) return NextResponse.json({ error: e1?.message || "not found" }, { status: 500 });
+        // recompute the product's rating + review_count from approved reviews
+        const { data: approved } = await admin
+          .from("reviews").select("rating").eq("product_id", rev.product_id).eq("is_approved", true);
+        const list = approved ?? [];
+        const avg = list.length ? list.reduce((s: number, r: any) => s + (r.rating || 0), 0) / list.length : 0;
+        await admin.from("products").update({ rating: Math.round(avg * 10) / 10, review_count: list.length }).eq("id", rev.product_id);
+        return NextResponse.json({ ok: true });
+      }
+      case "reject_review": {
+        const reviewId = String(body?.reviewId || "");
+        if (!reviewId) return NextResponse.json({ error: "Missing reviewId" }, { status: 400 });
+        const { error } = await admin.from("reviews").delete().eq("id", reviewId);
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         return NextResponse.json({ ok: true });
       }

@@ -38,6 +38,7 @@ interface PayoutSeller {
 }
 interface Data {
   products: ProductRow[]; pending: ProductRow[]; sellers: SellerRow[]; orders: OrderRow[];
+  pendingReviews: { id: string; product_id: string; rating: number; title: string | null; body: string | null; created_at: string; products?: { name: string } | null }[];
   accounting: {
     totals: { gross_cents: number; commission_cents: number; payout_cents: number };
     bySeller: AcctRow[];
@@ -45,7 +46,7 @@ interface Data {
   }
 }
 
-type Tab = 'pending' | 'products' | 'sellers' | 'orders' | 'accounting'
+type Tab = 'pending' | 'products' | 'sellers' | 'orders' | 'reviews' | 'accounting'
 
 const statusColor: Record<string, string> = {
   active: GREEN, pending: GOLD, rejected: RED, removed: '#999', draft: '#999',
@@ -106,6 +107,8 @@ export default function AdminDashboard() {
   function setProductStatus(id: string, status: string) { act({ action: 'set_product_status', productId: id, status }, 'p' + id) }
   function suspendSeller(id: string) { if (confirm('Suspend this seller? Their products stay but they are flagged suspended.')) act({ action: 'suspend_seller', sellerId: id }, 's' + id) }
   function activateSeller(id: string) { act({ action: 'activate_seller', sellerId: id }, 's' + id) }
+  function approveReview(id: string) { act({ action: 'approve_review', reviewId: id }, 'r' + id) }
+  function rejectReview(id: string) { if (confirm('Delete this review? This cannot be undone.')) act({ action: 'reject_review', reviewId: id }, 'r' + id) }
   function payPayout(p: PayoutSeller, period: PayoutPeriod) {
     if (!confirm(`Mark ${money(period.amount_cents)} to ${p.store_name} for ${period.label} as PAID?\n\nThis records the payout — make the actual EFT separately.`)) return
     act({ action: 'pay_payout', sellerId: p.seller_id, periodStart: period.period_start, periodEnd: period.period_end, amountCents: period.amount_cents }, 'pay' + p.seller_id + period.period_start)
@@ -123,6 +126,7 @@ export default function AdminDashboard() {
     { key: 'products', label: 'All products', count: data.products.length },
     { key: 'sellers', label: 'Sellers', count: data.sellers.length },
     { key: 'orders', label: 'Orders', count: data.orders.length },
+    { key: 'reviews', label: 'Reviews', count: data.pendingReviews.length },
     { key: 'accounting', label: 'Accounting' },
   ]
 
@@ -225,6 +229,26 @@ export default function AdminDashboard() {
                       <div style={{ fontSize: 12, color: '#888' }}>{o.shipping_name} · {new Date(o.created_at).toLocaleDateString('en-ZA')} · <Badge status={o.status} /></div>
                     </div>
                     <div style={{ fontFamily: 'var(--font-bebas)', color: NAVY, fontSize: 20 }}>{money(o.total_cents)}</div>
+                  </Card>
+                ))}
+              </div>
+        )}
+
+        {/* REVIEWS */}
+        {tab === 'reviews' && (
+          data.pendingReviews.length === 0
+            ? <Empty text="No reviews waiting for approval. 🎉" />
+            : <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {data.pendingReviews.map(r => (
+                  <Card key={r.id}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: '#888' }}>{r.products?.name || 'Product'}</div>
+                      <div style={{ color: GOLD, fontSize: 16 }}>{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</div>
+                      {r.title && <div style={{ fontWeight: 700, color: NAVY, marginTop: 4 }}>{r.title}</div>}
+                      {r.body && <div style={{ fontSize: 14, color: '#444', marginTop: 2 }}>{r.body}</div>}
+                    </div>
+                    <button disabled={busy === 'r' + r.id} onClick={() => approveReview(r.id)} style={btnSolid(GREEN)}>Approve</button>
+                    <button disabled={busy === 'r' + r.id} onClick={() => rejectReview(r.id)} style={btnGhost(RED)}>Delete</button>
                   </Card>
                 ))}
               </div>
