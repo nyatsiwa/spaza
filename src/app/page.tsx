@@ -143,14 +143,15 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* CATEGORY NAV */}
+      {/* CATEGORY TILES (under header) */}
       {categories.length > 0 && (
-        <div style={{ background: C.navyMid, borderBottom: `1px solid rgba(255,255,255,0.08)` }}>
-          <div style={{ maxWidth: 1320, margin: 'auto', padding: '0 12px', display: 'flex', gap: 4, overflowX: 'auto' }}>
+        <div style={{ background: C.navyMid, borderBottom: `1px solid rgba(255,255,255,0.08)`, padding: '12px 0' }}>
+          <div style={{ maxWidth: 1320, margin: 'auto', padding: '0 12px', display: 'flex', gap: 10, overflowX: 'auto' }}>
             {categories.map(cat => (
               <a key={cat.id} href={`/category/${cat.slug}`}
-                style={{ color: '#cdd4e0', textDecoration: 'none', fontSize: 13, fontWeight: 600, padding: '12px 12px', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>{cat.icon || '•'}</span>{cat.name}
+                style={{ flex: '0 0 auto', width: 92, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 12, padding: '12px 8px', textDecoration: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: '#e7eaf0' }}>
+                <span style={{ fontSize: 26 }}>{cat.icon || '📦'}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, textAlign: 'center', lineHeight: 1.2 }}>{cat.name}</span>
               </a>
             ))}
           </div>
@@ -169,6 +170,22 @@ export default function HomePage() {
           <a href="#products" style={{ display: 'inline-block', marginTop: 24, background: C.red, color: '#fff', padding: '14px 28px', borderRadius: 10, fontWeight: 700, textDecoration: 'none' }}>Shop Now</a>
         </div>
       </div>
+
+      {/* SHOP BY CATEGORY (grid) */}
+      {categories.length > 0 && (
+        <div style={{ maxWidth: 1320, margin: 'auto', padding: '40px 20px 0' }}>
+          <h2 style={{ fontFamily: 'var(--font-bebas)', fontSize: 30, color: C.navy, letterSpacing: 1, marginBottom: 20 }}>Shop by Category</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 16 }}>
+            {categories.map(cat => (
+              <a key={cat.id} href={`/category/${cat.slug}`}
+                style={{ background: '#fff', borderRadius: 14, padding: '28px 16px', textDecoration: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #eef0f4' }}>
+                <span style={{ fontSize: 44 }}>{cat.icon || '📦'}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.navy, textAlign: 'center' }}>{cat.name}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* PRODUCTS */}
       <div id="products" style={{ maxWidth: 1320, margin: 'auto', padding: '40px 20px' }}>
