@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useCartStore } from '@/lib/store/cart'
@@ -15,6 +15,14 @@ function emojiFor(n: string) { const s = (n || '').toLowerCase(); if (s.includes
 interface P { id: string; name: string; price_cents: number; compare_price_cents: number | null; stock_qty: number | null; images: string[] | null; seller_id: string; sellers?: { store_name: string } | null }
 
 export default function SearchPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', background: C.offWhite, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.g400 }}>Loading…</div>}>
+      <SearchInner />
+    </Suspense>
+  )
+}
+
+function SearchInner() {
   const sp = useSearchParams()
   const q = (sp.get('q') || '').trim()
   const [products, setProducts] = useState<P[]>([])
