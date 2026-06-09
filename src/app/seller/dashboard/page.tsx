@@ -20,6 +20,11 @@ interface Product {
   stock_qty: number | null; status: string; images: string[] | null; rejection_reason?: string | null; created_at: string
 }
 interface Limits { products: number; photos: number }
+interface SellerOrder {
+  id: string; product_name: string; product_image: string | null; quantity: number;
+  unit_price_cents: number; total_cents: number; seller_payout_cents: number; created_at: string;
+  orders?: { order_number: string; status: string; created_at: string; shipping_name: string; shipping_city: string; shipping_province: string } | null
+}
 
 const money = (cents: number) =>
   'R ' + (cents / 100).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -41,6 +46,20 @@ function statusInfo(status: string): { label: string; color: string } {
   }
 }
 
+function orderStatusInfo(status?: string): { label: string; color: string } {
+  switch (status) {
+    case 'paid': return { label: 'Paid', color: '#00A651' }
+    case 'processing': return { label: 'Processing', color: '#0A1628' }
+    case 'shipped': return { label: 'Shipped', color: '#0A1628' }
+    case 'delivered': return { label: 'Delivered', color: '#00A651' }
+    case 'cancelled': return { label: 'Cancelled', color: '#D6001C' }
+    case 'refunded': return { label: 'Refunded', color: '#888' }
+    case 'pending':
+    case 'payment_pending': return { label: 'Awaiting payment', color: '#b26a00' }
+    default: return { label: status || 'Pending', color: '#b26a00' }
+  }
+}
+
 export default function SellerDashboard() {
   const router = useRouter()
   const supabase = createClient()
@@ -49,6 +68,7 @@ export default function SellerDashboard() {
   const [seller, setSeller] = useState<SellerInfo | null>(null)
   const [products, setProducts] = useState<Product[]>([])
   const [limits, setLimits] = useState<Limits>({ products: 5, photos: 2 })
+  const [orders, setOrders] = useState<SellerOrder[]>([])
 
   // banking / payout details
   const [bankName, setBankName] = useState('')
@@ -100,6 +120,12 @@ export default function SellerDashboard() {
       setAccountNumber(s.bank_account_number || '')
       setBranchCode(s.bank_branch_code || '')
       setAccountType(s.bank_account_type || '')
+
+      // seller's sold line items (best-effort; doesn't block the dashboard)
+      try {
+        const ores = await fetch('/api/seller/orders', { headers: { ...(await authHeaders()) } })
+        if (ores.ok) { const oj = await ores.json(); setOrders(oj.orders || []) }
+      } catch { /* ignore */ }
     } catch {
       toast.error('Could not load your store')
     }
@@ -452,6 +478,36 @@ export default function SellerDashboard() {
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {/* your orders (what this seller has sold) */}
+        <h3 style={{ color: NAVY, fontSize: 17, margin: '28px 0 12px' }}>Your orders</h3>
+        {orders.length === 0 ? (
+          <div style={{ background: '#fff', borderRadius: 14, padding: 40, textAlign: 'center', color: '#999' }}>No orders yet. When a buyer purchases your products, they&apos;ll appear here.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {orders.map(o => (
+              <div key={o.id} style={{ background: '#fff', borderRadius: 12, padding: 12, display: 'flex', alignItems: 'center', gap: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)', flexWrap: 'wrap' }}>
+                <div style={{ width: 48, height: 48, borderRadius: 8, background: '#f0f1f4', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+                  {o.product_image ? <img src={o.product_image} alt={o.product_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span>🛒</span>}
+                </div>
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <div style={{ fontWeight: 600, color: NAVY, fontSize: 14 }}>{o.product_name} <span style={{ color: '#aaa', fontWeight: 400 }}>× {o.quantity}</span></div>
+                  <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+                    {o.orders?.order_number} · {o.orders ? new Date(o.orders.created_at).toLocaleDateString('en-ZA') : ''} ·{' '}
+                    <span style={{ fontWeight: 600, color: orderStatusInfo(o.orders?.status).color }}>{orderStatusInfo(o.orders?.status).label}</span>
+                  </div>
+                  {o.orders?.shipping_name && (
+                    <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>Ship to: {o.orders.shipping_name}{o.orders.shipping_city ? `, ${o.orders.shipping_city}` : ''}{o.orders.shipping_province ? `, ${o.orders.shipping_province}` : ''}</div>
+                  )}
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontFamily: 'var(--font-bebas)', color: NAVY, fontSize: 20 }}>{money(o.total_cents)}</div>
+                  <div style={{ fontSize: 11, color: GREEN }}>You earn {money(o.seller_payout_cents)}</div>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

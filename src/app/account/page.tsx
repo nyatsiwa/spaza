@@ -186,7 +186,7 @@ export default function AccountPage() {
           )}
 
           <h2 style={{ fontSize: 18, fontWeight: 700, color: NAVY, margin: 0 }}>Shipping details</h2>
-          <p style={{ fontSize: 13, color: '#666', marginTop: -8 }}>We use this to deliver your orders.</p>
+          <p style={{ fontSize: 13, color: '#666', marginTop: -8 }}>We use this to deliver your orders. <a href="/orders" style={{ color: RED, fontWeight: 600, textDecoration: 'none' }}>View my orders →</a></p>
 
           <Field label="Full name" value={form.full_name} onChange={v => set('full_name', v)} placeholder="Thandi Nkosi" />
           <Field label="Phone (optional)" value={form.phone} onChange={v => set('phone', v)} placeholder="072 123 4567" />
