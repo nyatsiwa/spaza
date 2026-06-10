@@ -49,6 +49,67 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "not_a_seller" }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
+
+    // ---- pickup (collection) address save ----
+    if (String(body?.action || "") === "pickup") {
+      const street = String(body?.street || "").trim();
+      const localArea = String(body?.localArea || "").trim();
+      const city = String(body?.city || "").trim();
+      const zone = String(body?.zone || "").trim();
+      const code = String(body?.code || "").trim();
+      const company = String(body?.company || "").trim();
+      const contactName = String(body?.contactName || "").trim();
+      const contactMobile = String(body?.contactMobile || "").trim();
+
+      if (!street || !city || !zone || !code)
+        return NextResponse.json(
+          { error: "Street, city, province and postal code are required." },
+          { status: 400 }
+        );
+      if (!/^\d{4}$/.test(code))
+        return NextResponse.json(
+          { error: "Enter a valid 4-digit postal code." },
+          { status: 400 }
+        );
+      if (!contactName || !contactMobile)
+        return NextResponse.json(
+          { error: "A pickup contact name and mobile number are required." },
+          { status: 400 }
+        );
+
+      const { error: pErr } = await admin
+        .from("sellers")
+        .update({
+          pickup_street: street,
+          pickup_local_area: localArea,
+          pickup_city: city,
+          pickup_zone: zone,
+          pickup_code: code,
+          pickup_company: company,
+          pickup_contact_name: contactName,
+          pickup_contact_mobile: contactMobile,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", seller.id);
+      if (pErr)
+        return NextResponse.json({ error: pErr.message }, { status: 500 });
+
+      return NextResponse.json({
+        ok: true,
+        pickup: {
+          pickup_street: street,
+          pickup_local_area: localArea,
+          pickup_city: city,
+          pickup_zone: zone,
+          pickup_code: code,
+          pickup_company: company,
+          pickup_contact_name: contactName,
+          pickup_contact_mobile: contactMobile,
+        },
+      });
+    }
+
+    // ---- banking (payout) details save (default) ----
     const bankName = String(body?.bankName || "").trim();
     const accountNumber = String(body?.accountNumber || "").trim();
     const branchCode = String(body?.branchCode || "").trim();

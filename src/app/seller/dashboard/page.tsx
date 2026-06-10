@@ -13,7 +13,10 @@ const GREEN = '#00A651'
 interface SellerInfo {
   id: string; store_name: string; plan: string; status: string;
   bank_name?: string | null; bank_account_number?: string | null;
-  bank_branch_code?: string | null; bank_account_type?: string | null
+  bank_branch_code?: string | null; bank_account_type?: string | null;
+  pickup_street?: string | null; pickup_local_area?: string | null; pickup_city?: string | null;
+  pickup_zone?: string | null; pickup_code?: string | null; pickup_company?: string | null;
+  pickup_contact_name?: string | null; pickup_contact_mobile?: string | null
 }
 interface Product {
   id: string; name: string; price_cents: number; compare_price_cents: number | null;
@@ -77,6 +80,15 @@ export default function SellerDashboard() {
   const [accountNumber, setAccountNumber] = useState('')
   const [branchCode, setBranchCode] = useState('')
   const [accountType, setAccountType] = useState('')
+  const [pStreet, setPStreet] = useState('')
+  const [pLocalArea, setPLocalArea] = useState('')
+  const [pCity, setPCity] = useState('')
+  const [pZone, setPZone] = useState('')
+  const [pCode, setPCode] = useState('')
+  const [pCompany, setPCompany] = useState('')
+  const [pContactName, setPContactName] = useState('')
+  const [pContactMobile, setPContactMobile] = useState('')
+  const [savingPickup, setSavingPickup] = useState(false)
   const [savingBank, setSavingBank] = useState(false)
   const [editingBank, setEditingBank] = useState(false)
 
@@ -122,6 +134,14 @@ export default function SellerDashboard() {
       setAccountNumber(s.bank_account_number || '')
       setBranchCode(s.bank_branch_code || '')
       setAccountType(s.bank_account_type || '')
+      setPStreet(s.pickup_street || '')
+      setPLocalArea(s.pickup_local_area || '')
+      setPCity(s.pickup_city || '')
+      setPZone(s.pickup_zone || '')
+      setPCode(s.pickup_code || '')
+      setPCompany(s.pickup_company || '')
+      setPContactName(s.pickup_contact_name || '')
+      setPContactMobile(s.pickup_contact_mobile || '')
 
       // seller's sold line items (best-effort; doesn't block the dashboard)
       try {
@@ -251,11 +271,40 @@ export default function SellerDashboard() {
     setSavingBank(false)
   }
 
+  // ----- pickup (collection) address -----
+  async function savePickup() {
+    if (!pStreet.trim() || !pCity.trim() || !pZone.trim() || !pCode.trim()) {
+      return toast.error('Street, city, province and postal code are required')
+    }
+    if (!pContactName.trim() || !pContactMobile.trim()) {
+      return toast.error('A pickup contact name and mobile number are required')
+    }
+    setSavingPickup(true)
+    try {
+      const res = await fetch('/api/seller/account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({
+          action: 'pickup',
+          street: pStreet.trim(), localArea: pLocalArea.trim(), city: pCity.trim(),
+          zone: pZone.trim(), code: pCode.trim(), company: pCompany.trim(),
+          contactName: pContactName.trim(), contactMobile: pContactMobile.trim(),
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { toast.error(json.error || 'Could not save pickup address'); setSavingPickup(false); return }
+      toast.success('Pickup address saved ✓')
+      setSeller(prev => prev ? { ...prev, ...json.pickup } : prev)
+    } catch { toast.error('Could not save pickup address') }
+    setSavingPickup(false)
+  }
+
   if (loading) {
     return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>Loading your store…</div>
   }
 
   const bankingComplete = !!(seller?.bank_name && seller?.bank_account_number && seller?.bank_branch_code && seller?.bank_account_type)
+  const pickupComplete = !!(seller?.pickup_street && seller?.pickup_city && seller?.pickup_zone && seller?.pickup_code && seller?.pickup_contact_name && seller?.pickup_contact_mobile)
 
   const atLimit = products.length >= limits.products
   const liveAddPct = pctOff(parseFloat(price) || 0, base.trim() ? parseFloat(base) : null)
@@ -351,7 +400,36 @@ export default function SellerDashboard() {
           )}
         </div>
 
-        {/* add product */}
+        {/* pickup (collection) address */}
+        <div style={{ background: '#fff', borderRadius: 14, padding: 20, marginBottom: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: NAVY }}>Pickup address</div>
+            <span style={{ fontSize: 12, fontWeight: 700, color: pickupComplete ? GREEN : '#b26a00' }}>{pickupComplete ? '✓ Set' : 'Needed for courier collection'}</span>
+          </div>
+          <p style={{ fontSize: 13, color: '#666', margin: '6px 0 14px' }}>Where The Courier Guy collects your parcels. Needed before you can create a waybill.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Field label="Company / store (optional)" value={pCompany} onChange={setPCompany} placeholder="Eden Extract" />
+            <Field label="Street address" value={pStreet} onChange={setPStreet} placeholder="12 Main Road" />
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 160px' }}><Field label="Suburb / area" value={pLocalArea} onChange={setPLocalArea} placeholder="Crystal Park" /></div>
+              <div style={{ flex: '1 1 160px' }}><Field label="City" value={pCity} onChange={setPCity} placeholder="Benoni" /></div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 160px' }}><Field label="Province" value={pZone} onChange={setPZone} placeholder="Gauteng" /></div>
+              <div style={{ flex: '1 1 120px' }}><Field label="Postal code" value={pCode} onChange={setPCode} placeholder="1501" /></div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 160px' }}><Field label="Contact name" value={pContactName} onChange={setPContactName} placeholder="Navhani" /></div>
+              <div style={{ flex: '1 1 160px' }}><Field label="Contact mobile" value={pContactMobile} onChange={setPContactMobile} placeholder="0821234567" /></div>
+            </div>
+            <div>
+              <button onClick={savePickup} disabled={savingPickup}
+                style={{ background: RED, color: '#fff', border: 'none', padding: '12px 20px', borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: savingPickup ? 'default' : 'pointer', opacity: savingPickup ? 0.7 : 1 }}>
+                {savingPickup ? 'Saving…' : 'Save pickup address'}
+              </button>
+            </div>
+          </div>
+        </div>
         <div style={{ marginBottom: 20 }}>
           {!showForm ? (
             <button onClick={() => {
