@@ -229,6 +229,9 @@ export default function AdminDashboard() {
                       <div style={{ fontSize: 12, color: '#888' }}>{o.shipping_name} · {new Date(o.created_at).toLocaleDateString('en-ZA')} · <Badge status={o.status} /></div>
                     </div>
                     <div style={{ fontFamily: 'var(--font-bebas)', color: NAVY, fontSize: 20 }}>{money(o.total_cents)}</div>
+                    {o.status === 'paid'
+                      ? <button disabled={busy === 'o' + o.id} onClick={() => act({ action: 'unmark_order_paid', orderId: o.id }, 'o' + o.id)} style={btnGhost('#888')}>Unmark paid</button>
+                      : <button disabled={busy === 'o' + o.id} onClick={() => act({ action: 'mark_order_paid', orderId: o.id }, 'o' + o.id)} style={btnSolid(GREEN)}>Mark paid (test)</button>}
                   </Card>
                 ))}
               </div>

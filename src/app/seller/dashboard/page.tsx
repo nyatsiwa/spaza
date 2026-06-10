@@ -26,7 +26,9 @@ interface Limits { products: number; photos: number }
 interface SellerOrder {
   id: string; product_name: string; product_image: string | null; quantity: number;
   unit_price_cents: number; total_cents: number; seller_payout_cents: number; created_at: string;
-  orders?: { order_number: string; status: string; created_at: string; shipping_name: string; shipping_city: string; shipping_province: string } | null
+  tracking_number?: string | null; ready_at?: string | null;
+  length_cm?: number | null; width_cm?: number | null; height_cm?: number | null; weight_kg?: number | null;
+  orders?: { id: string; order_number: string; status: string; created_at: string; shipping_name: string; shipping_city: string; shipping_province: string } | null
 }
 
 const money = (cents: number) =>
@@ -297,6 +299,47 @@ export default function SellerDashboard() {
       setSeller(prev => prev ? { ...prev, ...json.pickup } : prev)
     } catch { toast.error('Could not save pickup address') }
     setSavingPickup(false)
+  }
+
+  // ----- fulfilment / waybill -----
+  const [dims, setDims] = useState<Record<string, { l: string; w: string; h: string; kg: string }>>({})
+  const [wbBusy, setWbBusy] = useState<string | null>(null)
+  function setDim(itemId: string, key: 'l' | 'w' | 'h' | 'kg', val: string) {
+    setDims(prev => ({ ...prev, [itemId]: { l: '', w: '', h: '', kg: '', ...prev[itemId], [key]: val } }))
+  }
+  async function createWaybill(itemId: string) {
+    const d = dims[itemId] || { l: '', w: '', h: '', kg: '' }
+    if (!d.l || !d.w || !d.h || !d.kg) return toast.error('Enter length, width, height and weight')
+    if (!pickupComplete) return toast.error('Set your pickup address first')
+    setWbBusy(itemId)
+    try {
+      const res = await fetch('/api/seller/fulfilment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({ orderItemId: itemId, length: parseFloat(d.l), width: parseFloat(d.w), height: parseFloat(d.h), weight: parseFloat(d.kg) }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg = json.error === 'no_pickup_address' ? 'Set your pickup address first'
+          : json.error === 'order_not_paid' ? 'This order is not paid yet'
+          : json.error || 'Could not create waybill'
+        toast.error(msg); setWbBusy(null); return
+      }
+      toast.success(`Waybill created ✓ ${json.tracking || ''}`)
+      setOrders(prev => prev.map(o => o.id === itemId ? { ...o, tracking_number: json.tracking, ready_at: new Date().toISOString() } : o))
+      if (json.labelUrl) window.open(json.labelUrl, '_blank')
+    } catch { toast.error('Could not create waybill') }
+    setWbBusy(null)
+  }
+  async function printWaybill(itemId: string) {
+    setWbBusy(itemId)
+    try {
+      const res = await fetch(`/api/seller/fulfilment?orderItemId=${itemId}`, { headers: { ...(await authHeaders()) } })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json.labelUrl) { toast.error(json.error || 'Could not fetch waybill'); setWbBusy(null); return }
+      window.open(json.labelUrl, '_blank')
+    } catch { toast.error('Could not fetch waybill') }
+    setWbBusy(null)
   }
 
   if (loading) {
@@ -604,6 +647,37 @@ export default function SellerDashboard() {
                   <div style={{ fontFamily: 'var(--font-bebas)', color: NAVY, fontSize: 20 }}>{money(o.total_cents)}</div>
                   <div style={{ fontSize: 11, color: GREEN }}>You earn {money(o.seller_payout_cents)}</div>
                 </div>
+
+                {/* fulfilment / waybill */}
+                <div style={{ flexBasis: '100%', borderTop: '1px solid #eee', paddingTop: 10, marginTop: 2 }}>
+                  {o.tracking_number ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: GREEN }}>✓ Ready for courier</span>
+                      <span style={{ fontSize: 12, color: '#666' }}>Waybill {o.tracking_number}</span>
+                      <button onClick={() => printWaybill(o.id)} disabled={wbBusy === o.id}
+                        style={{ background: NAVY, color: '#fff', border: 'none', padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                        {wbBusy === o.id ? 'Fetching…' : 'Print waybill'}
+                      </button>
+                    </div>
+                  ) : o.orders?.status === 'paid' ? (
+                    <div>
+                      <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Enter parcel size &amp; weight to create the courier waybill:</div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <DimInput ph="L cm" value={dims[o.id]?.l || ''} onChange={(v: string) => setDim(o.id, 'l', v)} />
+                        <DimInput ph="W cm" value={dims[o.id]?.w || ''} onChange={(v: string) => setDim(o.id, 'w', v)} />
+                        <DimInput ph="H cm" value={dims[o.id]?.h || ''} onChange={(v: string) => setDim(o.id, 'h', v)} />
+                        <DimInput ph="kg" value={dims[o.id]?.kg || ''} onChange={(v: string) => setDim(o.id, 'kg', v)} />
+                        <button onClick={() => createWaybill(o.id)} disabled={wbBusy === o.id}
+                          style={{ background: RED, color: '#fff', border: 'none', padding: '9px 16px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: wbBusy === o.id ? 'default' : 'pointer', opacity: wbBusy === o.id ? 0.7 : 1 }}>
+                          {wbBusy === o.id ? 'Creating…' : 'Create waybill & mark ready'}
+                        </button>
+                      </div>
+                      {!pickupComplete && <div style={{ fontSize: 12, color: '#b26a00', marginTop: 6 }}>⚠ Set your pickup address above before creating a waybill.</div>}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: '#999' }}>Fulfilment opens once the order is paid.</div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -613,9 +687,15 @@ export default function SellerDashboard() {
   )
 }
 
+function DimInput({ ph, value, onChange }: { ph: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <input value={value} onChange={e => onChange(e.target.value)} placeholder={ph} inputMode="decimal"
+      style={{ width: 70, padding: '8px 10px', border: '1px solid #ddd', borderRadius: 8, fontSize: 13, outline: 'none' }} />
+  )
+}
+
 function Field({ label, value, onChange, type = 'text', placeholder }: {
-  label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string
-}) {
+  label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string}) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>{label}</span>

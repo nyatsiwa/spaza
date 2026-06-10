@@ -321,6 +321,28 @@ export async function POST(req: Request) {
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         return NextResponse.json({ ok: true });
       }
+      case "mark_order_paid": {
+        // TESTING AID: flip an order to paid so the fulfilment/waybill flow can
+        // be exercised before PayFast settlement is live.
+        const orderId = String(body?.orderId || "");
+        if (!orderId) return NextResponse.json({ error: "Missing orderId" }, { status: 400 });
+        const { error } = await admin
+          .from("orders")
+          .update({ status: "paid", updated_at: new Date().toISOString() })
+          .eq("id", orderId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ ok: true });
+      }
+      case "unmark_order_paid": {
+        const orderId = String(body?.orderId || "");
+        if (!orderId) return NextResponse.json({ error: "Missing orderId" }, { status: 400 });
+        const { error } = await admin
+          .from("orders")
+          .update({ status: "pending", updated_at: new Date().toISOString() })
+          .eq("id", orderId);
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ ok: true });
+      }
       default:
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }

@@ -45,8 +45,8 @@ export async function GET(req: Request) {
     const { data: items, error } = await admin
       .from("order_items")
       .select(
-        "id, product_name, product_image, quantity, unit_price_cents, total_cents, seller_payout_cents, tracking_number, shipped_at, delivered_at, created_at, " +
-          "orders(order_number, status, created_at, shipping_name, shipping_city, shipping_province)"
+        "id, product_name, product_image, quantity, unit_price_cents, total_cents, seller_payout_cents, tracking_number, shipped_at, delivered_at, ready_at, length_cm, width_cm, height_cm, weight_kg, created_at, " +
+          "orders(id, order_number, status, created_at, shipping_name, shipping_city, shipping_province)"
       )
       .eq("seller_id", seller.id)
       .order("created_at", { ascending: false })
