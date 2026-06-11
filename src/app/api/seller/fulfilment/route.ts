@@ -158,21 +158,68 @@ export async function POST(req: Request) {
     };
 
     // 1) rates -> cheapest service level
-    const ratesRes = await fetch(cg("rates"), {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ collection_address, delivery_address, parcels }),
-    });
-    const ratesJson = await ratesRes.json().catch(() => ({}));
-    if (!ratesRes.ok)
+    const ratesUrl = cg("rates");
+    let ratesRes: Response;
+    let ratesText = "";
+    let ratesJson: any = {};
+    try {
+      ratesRes = await fetch(ratesUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ collection_address, delivery_address, parcels }),
+      });
+    } catch (fe: any) {
+      // network-level failure (bad host, DNS, etc.)
       return NextResponse.json(
-        { error: ratesJson?.message || "Could not get courier rates.", detail: ratesJson },
+        {
+          error: "Could not reach the courier.",
+          diagnostic: {
+            stage: "rates_fetch_threw",
+            url: ratesUrl,
+            base_url_env: BASE,
+            key_present: !!KEY,
+            message: fe?.message || String(fe),
+          },
+        },
         { status: 502 }
       );
+    }
+    ratesText = await ratesRes.text().catch(() => "");
+    try {
+      ratesJson = ratesText ? JSON.parse(ratesText) : {};
+    } catch {
+      ratesJson = {};
+    }
+    if (!ratesRes.ok) {
+      return NextResponse.json(
+        {
+          error: "Could not get courier rates.",
+          diagnostic: {
+            stage: "rates_response_not_ok",
+            url: ratesUrl,
+            base_url_env: BASE,
+            key_present: !!KEY,
+            status: ratesRes.status,
+            statusText: ratesRes.statusText,
+            // first 600 chars of whatever the courier returned (JSON or HTML)
+            body: ratesText.slice(0, 600),
+          },
+        },
+        { status: 502 }
+      );
+    }
     const rateList: any[] = ratesJson?.rates || ratesJson?.data || [];
     if (!rateList.length)
       return NextResponse.json(
-        { error: "No courier rates available for this route." },
+        {
+          error: "No courier rates available for this route.",
+          diagnostic: {
+            stage: "rates_empty",
+            url: ratesUrl,
+            status: ratesRes.status,
+            body: ratesText.slice(0, 600),
+          },
+        },
         { status: 502 }
       );
     const cheapest = rateList

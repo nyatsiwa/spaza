@@ -320,8 +320,10 @@ export default function SellerDashboard() {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
+        if (json.diagnostic) console.log('Courier diagnostic:', json.diagnostic)
         const msg = json.error === 'no_pickup_address' ? 'Set your pickup address first'
           : json.error === 'order_not_paid' ? 'This order is not paid yet'
+          : json.diagnostic ? `${json.error} [${json.diagnostic.stage}${json.diagnostic.status ? ' ' + json.diagnostic.status : ''}]`
           : json.error || 'Could not create waybill'
         toast.error(msg); setWbBusy(null); return
       }
@@ -704,4 +706,3 @@ function Field({ label, value, onChange, type = 'text', placeholder }: {
     </label>
   )
 }
- 
