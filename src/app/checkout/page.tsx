@@ -83,18 +83,19 @@ export default function CheckoutPage() {
       const data = await res.json()
       if (!res.ok) { toast.error(data.error || 'Checkout failed'); setSubmitting(false); return }
 
-      // Auto-submit a form to PayFast (redirects the browser to the payment page)
-      const { url, fields } = data.payfast as { url: string; fields: Record<string, string> }
-      const form = document.createElement('form')
-      form.method = 'POST'
-      form.action = url
-      Object.entries(fields).forEach(([k, v]) => {
-        const input = document.createElement('input')
-        input.type = 'hidden'; input.name = k; input.value = v
-        form.appendChild(input)
-      })
-      document.body.appendChild(form)
-      form.submit()
+      // If the cart spans multiple sellers, there are multiple payments. We pay
+      // them one at a time: stash the rest and send the buyer to the first.
+      const payments = (data.payments || []) as { orderId: string; authorizationUrl: string; sellerStore: string }[]
+      if (payments.length > 1) {
+        try { sessionStorage.setItem('spaza_pending_payments', JSON.stringify(payments.slice(1))) } catch {}
+        toast('Your cart has items from more than one seller — you’ll pay each in turn.', { icon: '🛍️' })
+      }
+
+      const url = data.authorizationUrl || payments[0]?.authorizationUrl
+      if (!url) { toast.error('Could not start payment. Please try again.'); setSubmitting(false); return }
+
+      // Redirect the browser to Paystack's hosted payment page.
+      window.location.assign(url)
     } catch {
       toast.error('Something went wrong. Please try again.')
       setSubmitting(false)
@@ -167,9 +168,9 @@ export default function CheckoutPage() {
 
             <button onClick={handlePay} disabled={submitting}
               style={{ width: '100%', marginTop: 18, background: C.red, color: '#fff', border: 'none', padding: 15, borderRadius: 10, fontSize: 16, fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1 }}>
-              {submitting ? 'Redirecting to PayFast…' : `Pay ${money(grandTotal())} with PayFast`}
+              {submitting ? 'Redirecting to payment…' : `Pay ${money(grandTotal())}`}
             </button>
-            <p style={{ fontSize: 12, color: C.g400, textAlign: 'center', marginTop: 10 }}>🔒 Secure payment via PayFast</p>
+            <p style={{ fontSize: 12, color: C.g400, textAlign: 'center', marginTop: 10 }}>🔒 Secure payment via Paystack</p>
           </div>
         </div>
       </div>
