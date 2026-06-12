@@ -20,7 +20,8 @@ interface ProductRow {
 }
 interface SellerRow {
   id: string; store_name: string; plan: string; status: string;
-  total_sales: number | null; total_orders: number | null; created_at: string
+  total_sales: number | null; total_orders: number | null; created_at: string;
+  bank_account_number?: string | null; paystack_bank_code?: string | null; paystack_subaccount_code?: string | null
 }
 interface OrderRow {
   id: string; order_number: string; status: string; subtotal_cents: number;
@@ -107,6 +108,7 @@ export default function AdminDashboard() {
   function setProductStatus(id: string, status: string) { act({ action: 'set_product_status', productId: id, status }, 'p' + id) }
   function suspendSeller(id: string) { if (confirm('Suspend this seller? Their products stay but they are flagged suspended.')) act({ action: 'suspend_seller', sellerId: id }, 's' + id) }
   function activateSeller(id: string) { act({ action: 'activate_seller', sellerId: id }, 's' + id) }
+  function createSubaccount(id: string) { act({ action: 'create_subaccount', sellerId: id }, 'sa' + id) }
   function approveReview(id: string) { act({ action: 'approve_review', reviewId: id }, 'r' + id) }
   function rejectReview(id: string) { if (confirm('Delete this review? This cannot be undone.')) act({ action: 'reject_review', reviewId: id }, 'r' + id) }
   function payPayout(p: PayoutSeller, period: PayoutPeriod) {
@@ -201,19 +203,34 @@ export default function AdminDashboard() {
         {/* SELLERS */}
         {tab === 'sellers' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {data.sellers.map(s => (
+            {data.sellers.map(s => {
+              const hasBank = !!(s.paystack_bank_code && s.bank_account_number)
+              const hasSub = !!s.paystack_subaccount_code
+              return (
               <Card key={s.id}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, color: NAVY }}>{s.store_name}</div>
                   <div style={{ fontSize: 12, color: '#888' }}>
                     {s.plan === 'growth' ? 'Growth' : 'Free'} · <Badge status={s.status} /> · {s.total_orders ?? 0} orders
                   </div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>
+                    {hasSub
+                      ? <span style={{ color: GREEN, fontWeight: 700 }}>✓ Paystack subaccount active</span>
+                      : hasBank
+                        ? <span style={{ color: '#b26a00' }}>Banking set — subaccount not created</span>
+                        : <span style={{ color: '#999' }}>No banking on file</span>}
+                  </div>
                 </div>
+                {!hasSub && hasBank && (
+                  <button disabled={busy === 'sa' + s.id} onClick={() => createSubaccount(s.id)} style={btnSolid('#0A1628')}>
+                    {busy === 'sa' + s.id ? 'Creating…' : 'Create subaccount'}
+                  </button>
+                )}
                 {s.status === 'suspended'
                   ? <button disabled={busy === 's' + s.id} onClick={() => activateSeller(s.id)} style={btnSolid(GREEN)}>Reactivate</button>
                   : <button disabled={busy === 's' + s.id} onClick={() => suspendSeller(s.id)} style={btnGhost(RED)}>Suspend</button>}
               </Card>
-            ))}
+            )})}
           </div>
         )}
 

@@ -94,7 +94,7 @@ export async function GET(req: Request) {
     // ---- all sellers ----
     const { data: sellers } = await admin
       .from("sellers")
-      .select("id, store_name, plan, status, total_sales, total_orders, bank_name, bank_account_number, bank_branch_code, bank_account_type, created_at")
+      .select("id, store_name, plan, status, total_sales, total_orders, bank_name, bank_account_number, bank_branch_code, bank_account_type, paystack_bank_code, paystack_subaccount_code, created_at")
       .order("created_at", { ascending: false });
 
     // ---- all orders ----
@@ -270,6 +270,57 @@ export async function POST(req: Request) {
         const { error } = await admin.from("sellers").update({ status: "active", updated_at: now }).eq("id", sellerId);
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         return NextResponse.json({ ok: true });
+      }
+      case "create_subaccount": {
+        const sellerId = String(body?.sellerId || "");
+        if (!sellerId) return NextResponse.json({ error: "Missing sellerId" }, { status: 400 });
+        const secret = process.env.PAYSTACK_SECRET_KEY || "";
+        if (!secret)
+          return NextResponse.json({ error: "Paystack not configured (PAYSTACK_SECRET_KEY missing)." }, { status: 500 });
+
+        // load the seller's banking + plan
+        const { data: seller, error: sErr } = await admin
+          .from("sellers")
+          .select("id, store_name, plan, bank_account_number, paystack_bank_code, paystack_subaccount_code")
+          .eq("id", sellerId)
+          .single();
+        if (sErr || !seller)
+          return NextResponse.json({ error: sErr?.message || "Seller not found" }, { status: 404 });
+        if (seller.paystack_subaccount_code)
+          return NextResponse.json({ error: "Subaccount already exists for this seller." }, { status: 409 });
+        if (!seller.paystack_bank_code || !seller.bank_account_number)
+          return NextResponse.json({ error: "Seller must choose a bank and account number first." }, { status: 400 });
+
+        // commission % by plan (fallback default; checkout overrides per-transaction)
+        const pct = seller.plan === "growth" ? 5 : 8;
+
+        const res = await fetch("https://api.paystack.co/subaccount", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            business_name: seller.store_name || "Spaza seller",
+            settlement_bank: seller.paystack_bank_code,
+            account_number: seller.bank_account_number,
+            percentage_charge: pct,
+          }),
+        });
+        const pj = await res.json().catch(() => ({} as any));
+        if (!res.ok || !pj?.status)
+          return NextResponse.json(
+            { error: pj?.message || "Paystack subaccount creation failed.", detail: pj },
+            { status: 502 }
+          );
+
+        const subaccountCode = pj?.data?.subaccount_code || "";
+        if (!subaccountCode)
+          return NextResponse.json({ error: "Paystack did not return a subaccount code.", detail: pj }, { status: 502 });
+
+        await admin
+          .from("sellers")
+          .update({ paystack_subaccount_code: subaccountCode, updated_at: now })
+          .eq("id", sellerId);
+
+        return NextResponse.json({ ok: true, subaccount_code: subaccountCode });
       }
       case "pay_payout": {
         const sellerId = String(body?.sellerId || "");
