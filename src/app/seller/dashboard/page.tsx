@@ -13,6 +13,7 @@ const GREEN = '#00A651'
 interface SellerInfo {
   id: string; store_name: string; plan: string; status: string;
   bank_name?: string | null; bank_account_number?: string | null;
+  paystack_bank_code?: string | null; paystack_subaccount_code?: string | null;
   bank_branch_code?: string | null; bank_account_type?: string | null;
   pickup_street?: string | null; pickup_local_area?: string | null; pickup_city?: string | null;
   pickup_zone?: string | null; pickup_code?: string | null; pickup_company?: string | null;
@@ -79,6 +80,8 @@ export default function SellerDashboard() {
 
   // banking / payout details
   const [bankName, setBankName] = useState('')
+  const [bankCode, setBankCode] = useState('')
+  const [banks, setBanks] = useState<{ name: string; code: string }[]>([])
   const [accountNumber, setAccountNumber] = useState('')
   const [branchCode, setBranchCode] = useState('')
   const [accountType, setAccountType] = useState('')
@@ -133,6 +136,7 @@ export default function SellerDashboard() {
       setLimits(json.limits || { products: 5, photos: 2 })
       const s = json.seller || {}
       setBankName(s.bank_name || '')
+      setBankCode(s.paystack_bank_code || '')
       setAccountNumber(s.bank_account_number || '')
       setBranchCode(s.bank_branch_code || '')
       setAccountType(s.bank_account_type || '')
@@ -157,6 +161,12 @@ export default function SellerDashboard() {
           headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, Authorization: `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!}` },
         })
         if (cres.ok) setCategories(await cres.json())
+      } catch { /* ignore */ }
+
+      // Paystack SA banks for the payout dropdown
+      try {
+        const bres = await fetch('/api/paystack/banks')
+        if (bres.ok) { const bj = await bres.json(); setBanks(bj.banks || []) }
       } catch { /* ignore */ }
     } catch {
       toast.error('Could not load your store')
@@ -254,15 +264,15 @@ export default function SellerDashboard() {
 
   // ----- banking -----
   async function saveBanking() {
-    if (!bankName.trim() || !accountNumber.trim() || !branchCode.trim() || !accountType.trim()) {
-      return toast.error('Please complete all payout fields')
+    if (!bankCode || !accountNumber.trim() || !branchCode.trim() || !accountType.trim()) {
+      return toast.error('Please choose your bank and complete all payout fields')
     }
     setSavingBank(true)
     try {
       const res = await fetch('/api/seller/account', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({ bankName: bankName.trim(), accountNumber: accountNumber.trim(), branchCode: branchCode.trim(), accountType }),
+        body: JSON.stringify({ bankName: bankName.trim(), bankCode, accountNumber: accountNumber.trim(), branchCode: branchCode.trim(), accountType }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) { toast.error(json.error || 'Could not save payout details'); setSavingBank(false); return }
@@ -410,7 +420,14 @@ export default function SellerDashboard() {
                   Add your banking details to start listing products.
                 </div>
               )}
-              <Field label="Bank name" value={bankName} onChange={setBankName} placeholder="FNB / Capitec / Standard Bank…" />
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>Bank</span>
+                <select value={bankCode} onChange={e => { setBankCode(e.target.value); const b = banks.find(x => x.code === e.target.value); setBankName(b ? b.name : '') }}
+                  style={{ padding: '12px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 15, outline: 'none', background: '#fff' }}>
+                  <option value="">{banks.length ? 'Select your bank…' : 'Loading banks…'}</option>
+                  {banks.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+                </select>
+              </label>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ flex: '1 1 160px' }}><Field label="Account number" value={accountNumber} onChange={setAccountNumber} placeholder="1234567890" /></div>
                 <div style={{ flex: '1 1 120px' }}><Field label="Branch code" value={branchCode} onChange={setBranchCode} placeholder="250655" /></div>

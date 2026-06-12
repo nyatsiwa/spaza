@@ -46,7 +46,7 @@ async function resolveSeller(req: Request) {
 
   const { data: seller } = await admin
     .from("sellers")
-    .select("id, store_name, plan, status, bank_name, bank_account_number, bank_branch_code, bank_account_type, pickup_street, pickup_local_area, pickup_city, pickup_zone, pickup_code, pickup_company, pickup_contact_name, pickup_contact_mobile")
+    .select("id, store_name, plan, status, bank_name, bank_account_number, bank_branch_code, bank_account_type, paystack_bank_code, paystack_subaccount_code, pickup_street, pickup_local_area, pickup_city, pickup_zone, pickup_code, pickup_company, pickup_contact_name, pickup_contact_mobile")
     .eq("user_id", user.id)
     .maybeSingle();
 

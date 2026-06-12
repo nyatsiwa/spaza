@@ -111,6 +111,7 @@ export async function POST(req: Request) {
 
     // ---- banking (payout) details save (default) ----
     const bankName = String(body?.bankName || "").trim();
+    const bankCode = String(body?.bankCode || "").trim();
     const accountNumber = String(body?.accountNumber || "").trim();
     const branchCode = String(body?.branchCode || "").trim();
     const accountType = String(body?.accountType || "").trim().toLowerCase();
@@ -140,6 +141,7 @@ export async function POST(req: Request) {
       .from("sellers")
       .update({
         bank_name: bankName,
+        paystack_bank_code: bankCode || null,
         bank_account_number: accountNumber.replace(/\s/g, ""),
         bank_branch_code: branchCode.replace(/\s/g, ""),
         bank_account_type: accountType,
@@ -153,6 +155,7 @@ export async function POST(req: Request) {
       ok: true,
       banking: {
         bank_name: bankName,
+        paystack_bank_code: bankCode || null,
         bank_account_number: accountNumber.replace(/\s/g, ""),
         bank_branch_code: branchCode.replace(/\s/g, ""),
         bank_account_type: accountType,
