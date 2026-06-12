@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { SELLER_PLANS } from "@/lib/payfast";
+import { SELLER_PLANS } from "@/lib/commission";
 import {
   createServerSupabaseClient,
   createAdminClient,
@@ -11,10 +11,10 @@ import {
  * Body: { plan: "free" | "growth", storeName?, storeDescription?, category? }
  *
  * Free  -> seller goes ACTIVE instantly, an active subscription row is created,
- *          returns { activated: true }. No PayFast involved.
+ *          returns { activated: true }. No payment involved.
  * Growth-> seller is created/kept PENDING, returns { pending: true } for now.
- *          (PayFast recurring billing gets wired here once credentials are
- *          recovered — see the TODO block below.)
+ *          (Paystack subscription billing gets wired here later — see the TODO
+ *          block below.)
  */
 export async function POST(req: Request) {
   try {
@@ -151,7 +151,7 @@ export async function POST(req: Request) {
       // Free never bills, but current_period_end / next_billing_date are
       // NOT NULL in the DB. Use a far-future "forever" sentinel so the row
       // satisfies the constraint without implying a real charge (amount is 0
-      // and there's no PayFast token, so no billing job will ever touch it).
+      // and there's no billing token, so no billing job will ever touch it).
       const farFuture = new Date();
       farFuture.setFullYear(farFuture.getFullYear() + 100);
       const forever = farFuture.toISOString();
@@ -204,27 +204,19 @@ export async function POST(req: Request) {
       });
     }
 
-    // ---- 5. GROWTH: gated on PayFast credentials -------------------------
+    // ---- 5. GROWTH: gated on Paystack subscription billing --------------
     // The seller now exists (pending). The recurring R70/mo subscription will
-    // be created + activated by the ITN handler once payment succeeds.
+    // be wired via Paystack (plans + subscriptions) in a later step.
     //
-    // TODO (once PayFast creds are recovered) — replace the response below with:
-    //
-    //   const { buildSubscriptionPayload } = await import("@/lib/payfast");
-    //   const payfast = buildSubscriptionPayload({
-    //     sellerId,
-    //     amountCents: planConfig.amount_cents,
-    //     itemName: `Spaza-Growth-${sellerId.slice(0, 8)}`,
-    //     emailAddress: user.email,
-    //   });
-    //   return NextResponse.json({ payfast });
+    // TODO (Paystack): create/charge a Paystack subscription for the R70/mo
+    // Growth plan here, then activate the seller + subscription on success.
     //
     return NextResponse.json({
       pending: true,
       plan: "growth",
       sellerId,
       message:
-        "Growth plan selected. The R70/month subscription activates once PayFast billing is set up.",
+        "Growth plan selected. The R70/month subscription activates once billing is set up.",
     });
   } catch (err: any) {
     return NextResponse.json(
