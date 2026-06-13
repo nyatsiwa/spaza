@@ -244,8 +244,8 @@ export default function HomePage() {
           <p>5488 Oregon Crescent, Crystal Park, Benoni, 1501 · 076 789 4445</p>
           <p style={{ marginTop: 12, display: 'flex', gap: 18, flexWrap: 'wrap' }}>
             <a href="/terms" style={{ color: C.g400 }}>Terms</a>
-            <a href="/privacy" style={{ color: C.g400 }}>Privacy</a>
-            <a href="/returns" style={{ color: C.g400 }}>Returns</a>
+            <a href="/privacy-policy" style={{ color: C.g400 }}>Privacy</a>
+            <a href="/refund-policy" style={{ color: C.g400 }}>Returns</a>
             <a href="/account" style={{ color: C.g400 }}>My Account</a>
           </p>
           <p style={{ marginTop: 16, fontSize: 12, opacity: 0.6 }}>© {new Date().getFullYear()} Spaza. All rights reserved.</p>
@@ -328,3 +328,5 @@ function Row({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
+
+
