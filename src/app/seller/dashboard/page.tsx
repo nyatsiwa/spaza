@@ -155,6 +155,18 @@ export default function SellerDashboard() {
         if (ores.ok) { const oj = await ores.json(); setOrders(oj.orders || []) }
       } catch { /* ignore */ }
 
+      // best-effort: refresh courier tracking for open waybills, then re-pull orders
+      try {
+        const tr = await fetch('/api/seller/tracking/refresh', { method: 'POST', headers: { ...(await authHeaders()) } })
+        if (tr.ok) {
+          const tj = await tr.json().catch(() => ({}))
+          if (tj.updated > 0) {
+            const ores2 = await fetch('/api/seller/orders', { headers: { ...(await authHeaders()) } })
+            if (ores2.ok) { const oj2 = await ores2.json(); setOrders(oj2.orders || []) }
+          }
+        }
+      } catch { /* ignore */ }
+
       // categories for the product form
       try {
         const cres = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/categories?select=id,name&is_active=eq.true&order=sort_order.asc`, {
@@ -314,6 +326,19 @@ export default function SellerDashboard() {
   // ----- fulfilment / waybill -----
   const [dims, setDims] = useState<Record<string, { l: string; w: string; h: string; kg: string }>>({})
   const [wbBusy, setWbBusy] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  async function refreshTracking() {
+    setRefreshing(true)
+    try {
+      const tr = await fetch('/api/seller/tracking/refresh', { method: 'POST', headers: { ...(await authHeaders()) } })
+      const tj = await tr.json().catch(() => ({}))
+      if (!tr.ok) { toast.error(tj.error || 'Could not refresh tracking'); setRefreshing(false); return }
+      const ores = await fetch('/api/seller/orders', { headers: { ...(await authHeaders()) } })
+      if (ores.ok) { const oj = await ores.json(); setOrders(oj.orders || []) }
+      toast.success(tj.updated > 0 ? `Updated ${tj.updated} order${tj.updated === 1 ? '' : 's'}` : 'Tracking up to date')
+    } catch { toast.error('Could not refresh tracking') }
+    setRefreshing(false)
+  }
   function setDim(itemId: string, key: 'l' | 'w' | 'h' | 'kg', val: string) {
     setDims(prev => ({ ...prev, [itemId]: { l: '', w: '', h: '', kg: '', ...prev[itemId], [key]: val } }))
   }
@@ -660,7 +685,15 @@ export default function SellerDashboard() {
         )}
 
         {/* your orders (what this seller has sold) */}
-        <h3 style={{ color: NAVY, fontSize: 17, margin: '28px 0 12px' }}>Your orders</h3>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '28px 0 12px', gap: 12, flexWrap: 'wrap' }}>
+          <h3 style={{ color: NAVY, fontSize: 17, margin: 0 }}>Your orders</h3>
+          {orders.some(o => o.tracking_number) && (
+            <button onClick={refreshTracking} disabled={refreshing}
+              style={{ background: 'none', border: `1px solid ${NAVY}33`, color: NAVY, borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1 }}>
+              {refreshing ? 'Refreshing…' : '↻ Refresh tracking'}
+            </button>
+          )}
+        </div>
         {orders.length === 0 ? (
           <div style={{ background: '#fff', borderRadius: 14, padding: 40, textAlign: 'center', color: '#999' }}>No orders yet. When a buyer purchases your products, they&apos;ll appear here.</div>
         ) : (
