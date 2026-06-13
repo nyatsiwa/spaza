@@ -238,8 +238,12 @@ export default function AdminDashboard() {
                     </div>
                     <div style={{ fontFamily: 'var(--font-bebas)', color: NAVY, fontSize: 20 }}>{money(o.total_cents)}</div>
                     {o.status === 'paid'
-                      ? <button disabled={busy === 'o' + o.id} onClick={() => act({ action: 'unmark_order_paid', orderId: o.id }, 'o' + o.id)} style={btnGhost('#888')}>Unmark paid</button>
-                      : <button disabled={busy === 'o' + o.id} onClick={() => act({ action: 'mark_order_paid', orderId: o.id }, 'o' + o.id)} style={btnSolid(GREEN)}>Mark paid (test)</button>}
+                      ? <button disabled={busy === 'o' + o.id}
+                          onClick={() => { if (confirm('Revert this order to pending? Only do this to correct a mistake.')) act({ action: 'unmark_order_paid', orderId: o.id }, 'o' + o.id) }}
+                          style={{ background: 'transparent', color: '#aaa', border: 'none', fontSize: 11, textDecoration: 'underline', cursor: 'pointer' }}>revert to pending</button>
+                      : <button disabled={busy === 'o' + o.id}
+                          onClick={() => { if (confirm('Manually mark this order PAID?\n\nNormally Paystack does this automatically. Only use this if a payment succeeded but the order is stuck on pending (e.g. a failed webhook).')) act({ action: 'mark_order_paid', orderId: o.id }, 'o' + o.id) }}
+                          style={{ background: 'transparent', color: '#aaa', border: 'none', fontSize: 11, textDecoration: 'underline', cursor: 'pointer' }}>mark paid (manual)</button>}
                   </Card>
                 ))}
               </div>
