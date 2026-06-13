@@ -64,7 +64,7 @@ export async function POST(req: Request) {
       const emailToken: string = data?.email_token || "";
       const nextPayment: string = data?.next_payment_date || data?.subscription?.next_payment_date || "";
 
-      // Fallback: find seller by the pending subscription reference.
+      // Fallback 1: find seller by the pending subscription reference.
       if (!sellerId && reference) {
         const { data: subRow } = await admin
           .from("seller_subscriptions")
@@ -72,6 +72,32 @@ export async function POST(req: Request) {
           .eq("paystack_reference", reference)
           .maybeSingle();
         sellerId = subRow?.seller_id || "";
+      }
+
+      // Fallback 2: resolve by customer email. This is the path that matters
+      // for `subscription.create`, which carries the customer email + the
+      // subscription_code but NONE of our metadata and no order reference.
+      // charge.success and subscription.create can also arrive in either
+      // order, so email is the only key both events independently carry.
+      // email -> profiles.id (= sellers.user_id) -> seller.
+      if (!sellerId) {
+        const customerEmail: string =
+          data?.customer?.email || data?.subscription?.customer?.email || "";
+        if (customerEmail) {
+          const { data: profileRow } = await admin
+            .from("profiles")
+            .select("id")
+            .ilike("email", customerEmail)
+            .maybeSingle();
+          if (profileRow?.id) {
+            const { data: sellerRow } = await admin
+              .from("sellers")
+              .select("id")
+              .eq("user_id", profileRow.id)
+              .maybeSingle();
+            sellerId = sellerRow?.id || "";
+          }
+        }
       }
 
       if (sellerId) {
@@ -97,6 +123,7 @@ export async function POST(req: Request) {
         };
         if (subscriptionCode) subPatch.paystack_subscription_code = subscriptionCode;
         if (emailToken) subPatch.paystack_email_token = emailToken;
+        if (reference) subPatch.paystack_reference = reference;
 
         const { data: existingSub } = await admin
           .from("seller_subscriptions")
