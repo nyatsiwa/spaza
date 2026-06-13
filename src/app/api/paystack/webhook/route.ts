@@ -73,7 +73,7 @@ export async function POST(req: Request) {
         if (order && order.status !== "paid") {
           await admin
             .from("orders")
-            .update({ status: "paid", updated_at: now })
+            .update({ status: "paid", paid_at: now, updated_at: now })
             .eq("id", order.id);
         }
       }
@@ -86,4 +86,3 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ received: true }, { status: 200 });
 }
- 

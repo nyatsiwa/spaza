@@ -27,23 +27,20 @@ interface OrderRow {
   id: string; order_number: string; status: string; subtotal_cents: number;
   shipping_cents: number; total_cents: number; shipping_name: string; created_at: string
 }
-interface AcctRow {
-  seller_id: string; store_name: string; gross_cents: number; commission_cents: number; payout_cents: number; line_items: number
+interface AcctSeller {
+  seller_id: string; store_name: string; gross_cents: number; commission_cents: number; seller_amount_cents: number; order_count: number
 }
-interface PayoutPeriod {
-  period_start: string; period_end: string; label: string; amount_cents: number; paid: boolean; paid_at: string | null; due: boolean
-}
-interface PayoutSeller {
-  seller_id: string; store_name: string; periods: PayoutPeriod[];
-  banking: { bank_name?: string | null; bank_account_number?: string | null; bank_branch_code?: string | null; bank_account_type?: string | null; complete: boolean }
+interface MonthRow {
+  month: string; label: string; gross_cents: number; commission_cents: number; order_count: number
 }
 interface Data {
   products: ProductRow[]; pending: ProductRow[]; sellers: SellerRow[]; orders: OrderRow[];
   pendingReviews: { id: string; product_id: string; rating: number; title: string | null; body: string | null; created_at: string; products?: { name: string } | null }[];
   accounting: {
-    totals: { gross_cents: number; commission_cents: number; payout_cents: number };
-    bySeller: AcctRow[];
-    payouts: PayoutSeller[];
+    paid: { gross_cents: number; commission_cents: number; seller_amount_cents: number };
+    pending: { gross_cents: number; commission_cents: number; seller_amount_cents: number };
+    commissionByMonth: MonthRow[];
+    bySeller: AcctSeller[];
   }
 }
 
@@ -111,14 +108,6 @@ export default function AdminDashboard() {
   function createSubaccount(id: string) { act({ action: 'create_subaccount', sellerId: id }, 'sa' + id) }
   function approveReview(id: string) { act({ action: 'approve_review', reviewId: id }, 'r' + id) }
   function rejectReview(id: string) { if (confirm('Delete this review? This cannot be undone.')) act({ action: 'reject_review', reviewId: id }, 'r' + id) }
-  function payPayout(p: PayoutSeller, period: PayoutPeriod) {
-    if (!confirm(`Mark ${money(period.amount_cents)} to ${p.store_name} for ${period.label} as PAID?\n\nThis records the payout — make the actual EFT separately.`)) return
-    act({ action: 'pay_payout', sellerId: p.seller_id, periodStart: period.period_start, periodEnd: period.period_end, amountCents: period.amount_cents }, 'pay' + p.seller_id + period.period_start)
-  }
-  function unpayPayout(p: PayoutSeller, period: PayoutPeriod) {
-    if (!confirm(`Undo the paid mark for ${p.store_name} · ${period.label}?`)) return
-    act({ action: 'unpay_payout', sellerId: p.seller_id, periodStart: period.period_start }, 'pay' + p.seller_id + period.period_start)
-  }
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>Loading admin…</div>
   if (!data) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>No data.</div>
@@ -131,6 +120,8 @@ export default function AdminDashboard() {
     { key: 'reviews', label: 'Reviews', count: data.pendingReviews.length },
     { key: 'accounting', label: 'Accounting' },
   ]
+
+  const acct = data.accounting
 
   return (
     <div style={{ minHeight: '100vh', background: '#f4f5f7' }}>
@@ -158,7 +149,7 @@ export default function AdminDashboard() {
         {/* PENDING */}
         {tab === 'pending' && (
           data.pending.length === 0
-            ? <Empty text="No products waiting for review. 🎉" />
+            ? <Empty text="No products waiting for review." />
             : <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {data.pending.map(p => (
                   <Card key={p.id}>
@@ -257,7 +248,7 @@ export default function AdminDashboard() {
         {/* REVIEWS */}
         {tab === 'reviews' && (
           data.pendingReviews.length === 0
-            ? <Empty text="No reviews waiting for approval. 🎉" />
+            ? <Empty text="No reviews waiting for approval." />
             : <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {data.pendingReviews.map(r => (
                   <Card key={r.id}>
@@ -277,53 +268,53 @@ export default function AdminDashboard() {
         {/* ACCOUNTING */}
         {tab === 'accounting' && (
           <div>
-            <div style={{ background: '#fff7f0', border: `1px solid ${GOLD}55`, borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#7a5b00', marginBottom: 16 }}>
-              These are <b>expected / pending</b> figures based on orders placed. They are not settled payments — PayFast settlement and refunds aren't wired in yet, so treat these as projections.
+            <div style={{ background: '#eef7f0', border: `1px solid ${GREEN}55`, borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#1a5e36', marginBottom: 16 }}>
+              <b>Paid</b> figures are settled: with Paystack split payments, each seller&rsquo;s share goes directly to their subaccount and Spaza keeps its commission + delivery automatically — no manual payouts. <b>Pending</b> figures are projections from orders not yet paid.
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18 }}>
-              <Stat label="Gross sales (expected)" value={money(data.accounting.totals.gross_cents)} />
-              <Stat label="Commission earned" value={money(data.accounting.totals.commission_cents)} color={GREEN} />
-              <Stat label="Owed to sellers (payouts)" value={money(data.accounting.totals.payout_cents)} color={NAVY} />
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 10 }}>
+              <Stat label="Gross sales (paid)" value={money(acct.paid.gross_cents)} />
+              <Stat label="Commission earned (paid)" value={money(acct.paid.commission_cents)} color={GREEN} />
+              <Stat label="Paid to sellers (via Paystack)" value={money(acct.paid.seller_amount_cents)} color={NAVY} />
             </div>
-            <h3 style={{ color: NAVY, fontSize: 15, margin: '0 0 10px' }}>Payout schedule (per seller · 1st–14th and 15th–end)</h3>
-            {data.accounting.payouts.length === 0
-              ? <Empty text="No sales recorded yet." />
-              : <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  {data.accounting.payouts.map(ps => (
-                    <div key={ps.seller_id} style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-                      <div style={{ padding: '12px 14px', background: '#f0f1f4' }}>
-                        <div style={{ fontWeight: 700, color: NAVY }}>{ps.store_name}</div>
-                        {ps.banking.complete ? (
-                          <div style={{ fontSize: 12, color: '#555', marginTop: 3 }}>
-                            {ps.banking.bank_name} · <span style={{ textTransform: 'capitalize' }}>{ps.banking.bank_account_type}</span> · Acc {ps.banking.bank_account_number} · Branch {ps.banking.bank_branch_code}
-                          </div>
-                        ) : (
-                          <div style={{ fontSize: 12, color: RED, fontWeight: 700, marginTop: 3 }}>⚠ No payout details on file — seller must add banking before they can be paid</div>
-                        )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 22 }}>
+              <Stat label="Gross sales (pending)" value={money(acct.pending.gross_cents)} color="#888" />
+              <Stat label="Commission (pending)" value={money(acct.pending.commission_cents)} color="#888" />
+              <Stat label="Sellers (pending)" value={money(acct.pending.seller_amount_cents)} color="#888" />
+            </div>
+
+            <h3 style={{ color: NAVY, fontSize: 15, margin: '0 0 10px' }}>Commission earned by month (paid orders)</h3>
+            {acct.commissionByMonth.length === 0
+              ? <Empty text="No paid orders yet." />
+              : <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', marginBottom: 22 }}>
+                  {acct.commissionByMonth.map((m, i) => (
+                    <div key={m.month} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderTop: i === 0 ? 'none' : '1px solid #f0f1f4', flexWrap: 'wrap' }}>
+                      <div style={{ flex: '1 1 160px' }}>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>{m.label}</div>
+                        <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{m.order_count} order{m.order_count === 1 ? '' : 's'} · {money(m.gross_cents)} gross</div>
                       </div>
-                      {ps.periods.map(per => (
-                        <div key={per.period_start} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderTop: '1px solid #f0f1f4', flexWrap: 'wrap' }}>
-                          <div style={{ flex: '1 1 160px', minWidth: 0 }}>
-                            <div style={{ fontSize: 14, fontWeight: 600, color: NAVY }}>{per.label}</div>
-                            <div style={{ fontSize: 12, marginTop: 2 }}>
-                              {per.paid
-                                ? <span style={{ color: GREEN, fontWeight: 700 }}>Paid{per.paid_at ? ' · ' + new Date(per.paid_at).toLocaleDateString('en-ZA') : ''}</span>
-                                : per.due
-                                  ? <span style={{ color: RED, fontWeight: 700 }}>Due now</span>
-                                  : <span style={{ color: '#888' }}>Current period (still accruing)</span>}
-                            </div>
-                          </div>
-                          <div style={{ fontFamily: 'var(--font-bebas)', color: NAVY, fontSize: 22, minWidth: 110, textAlign: 'right' }}>{money(per.amount_cents)}</div>
-                          {per.paid
-                            ? <button disabled={busy === 'pay' + ps.seller_id + per.period_start} onClick={() => unpayPayout(ps, per)} style={btnGhost('#888')}>Undo</button>
-                            : <button disabled={busy === 'pay' + ps.seller_id + per.period_start || !per.due || !ps.banking.complete}
-                                title={!ps.banking.complete ? 'Seller has no banking details' : (!per.due ? 'Period not closed yet' : '')}
-                                onClick={() => payPayout(ps, per)}
-                                style={{ background: (per.due && ps.banking.complete) ? GREEN : '#cfd3da', color: '#fff', border: 'none', padding: '9px 18px', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: (per.due && ps.banking.complete) ? 'pointer' : 'not-allowed' }}>
-                                Pay
-                              </button>}
-                        </div>
-                      ))}
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 11, color: '#888' }}>Commission</div>
+                        <div style={{ fontFamily: 'var(--font-bebas)', color: GREEN, fontSize: 24 }}>{money(m.commission_cents)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>}
+
+            <h3 style={{ color: NAVY, fontSize: 15, margin: '0 0 10px' }}>Commission by seller (paid orders)</h3>
+            {acct.bySeller.length === 0
+              ? <Empty text="No paid orders yet." />
+              : <div style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                  {acct.bySeller.map((s, i) => (
+                    <div key={s.seller_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderTop: i === 0 ? 'none' : '1px solid #f0f1f4', flexWrap: 'wrap' }}>
+                      <div style={{ flex: '1 1 160px' }}>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>{s.store_name}</div>
+                        <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{s.order_count} order{s.order_count === 1 ? '' : 's'} · {money(s.gross_cents)} gross · {money(s.seller_amount_cents)} to seller</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 11, color: '#888' }}>Commission</div>
+                        <div style={{ fontFamily: 'var(--font-bebas)', color: GREEN, fontSize: 24 }}>{money(s.commission_cents)}</div>
+                      </div>
                     </div>
                   ))}
                 </div>}

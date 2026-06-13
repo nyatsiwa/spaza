@@ -5,42 +5,16 @@ import {
 } from "@/lib/supabase-server";
 
 /**
- * GET  /api/admin            -> { pending, products, sellers, orders, accounting }
- * POST /api/admin            -> perform an action (admin only)
- *   body: { action, ... }
- *     approve_product  { productId }
- *     reject_product   { productId, reason }
- *     set_product_status { productId, status }     // active | removed | pending
- *     suspend_seller   { sellerId }
- *     activate_seller  { sellerId }
+ * GET  /api/admin  -> { pending, products, sellers, orders, accounting }
+ * POST /api/admin  -> perform an action (admin only)
  *
- * Every request verifies the caller's profiles.role === 'admin' using the admin
- * (service-role) client, so RLS never blocks the admin's cross-tenant view.
+ * Accounting note: sellers are paid directly by Paystack via subaccount splits,
+ * so there is no manual payout step. Accounting shows commission Spaza earned on
+ * PAID orders (settled), a PENDING projection for unpaid orders, and a per-month
+ * commission breakdown.
  */
 
-const COMMISSION_RATE: Record<string, number> = { free: 0.08, growth: 0.05 };
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** Bucket a timestamp into a calendar half-month period (1–14 or 15–end). */
-function halfMonth(ts: string): { start: string; end: string } {
-  const d = new Date(ts);
-  const y = d.getUTCFullYear();
-  const m = d.getUTCMonth(); // 0-11
-  const day = d.getUTCDate();
-  const firstHalf = day <= 14;
-  const startDay = firstHalf ? 1 : 15;
-  const endDate = firstHalf ? new Date(Date.UTC(y, m, 14)) : new Date(Date.UTC(y, m + 1, 0));
-  const iso = (dt: Date) => dt.toISOString().slice(0, 10);
-  return { start: iso(new Date(Date.UTC(y, m, startDay))), end: iso(endDate) };
-}
-
-/** "1–14 Jun 2026" / "15–30 Jun 2026" */
-function periodLabel(startISO: string, endISO: string): string {
-  const s = new Date(startISO);
-  const e = new Date(endISO);
-  return `${s.getUTCDate()}–${e.getUTCDate()} ${MONTHS[s.getUTCMonth()]} ${s.getUTCFullYear()}`;
-}
+const MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 async function resolveAdmin(req: Request) {
   const admin = createAdminClient();
@@ -76,7 +50,6 @@ export async function GET(req: Request) {
     if (!isAdmin)
       return NextResponse.json({ error: "not_admin" }, { status: 403 });
 
-    // ---- all products (join seller store name) ----
     const { data: products } = await admin
       .from("products")
       .select("id, name, price_cents, stock_qty, status, images, rejection_reason, seller_id, created_at, sellers(store_name)")
@@ -84,115 +57,86 @@ export async function GET(req: Request) {
 
     const pending = (products ?? []).filter((p: any) => p.status === "pending");
 
-    // ---- pending reviews (awaiting approval) ----
     const { data: pendingReviews } = await admin
       .from("reviews")
       .select("id, product_id, rating, title, body, created_at, products(name)")
       .eq("is_approved", false)
       .order("created_at", { ascending: false });
 
-    // ---- all sellers ----
     const { data: sellers } = await admin
       .from("sellers")
       .select("id, store_name, plan, status, total_sales, total_orders, bank_name, bank_account_number, bank_branch_code, bank_account_type, paystack_bank_code, paystack_subaccount_code, created_at")
       .order("created_at", { ascending: false });
 
-    // ---- all orders ----
     const { data: orders } = await admin
       .from("orders")
-      .select("id, order_number, status, subtotal_cents, shipping_cents, total_cents, shipping_name, created_at")
+      .select("id, order_number, status, subtotal_cents, shipping_cents, total_cents, commission_cents, seller_amount_cents, spaza_amount_cents, seller_id, paid_at, shipping_name, created_at")
       .order("created_at", { ascending: false })
       .limit(200);
 
-    // ---- accounting (EXPECTED/PENDING figures from order_items) ----
-    // NOTE: these are computed from orders placed, not from settled payments,
-    // because PayFast settlement isn't wired yet. Labelled as such in the UI.
-    const { data: items } = await admin
-      .from("order_items")
-      .select("seller_id, total_cents, commission_cents, seller_payout_cents, orders(created_at)");
-
-    const bySeller = new Map<string, { gross: number; commission: number; payout: number; units: number }>();
-    let grossAll = 0, commissionAll = 0, payoutAll = 0;
-
-    // half-month payout buckets: key `${seller_id}|${period_start}`
-    const buckets = new Map<string, { seller_id: string; start: string; end: string; amount: number }>();
-
-    (items ?? []).forEach((it: any) => {
-      const g = it.total_cents || 0;
-      const c = it.commission_cents || 0;
-      const p = it.seller_payout_cents || 0;
-      grossAll += g; commissionAll += c; payoutAll += p;
-      const cur = bySeller.get(it.seller_id) || { gross: 0, commission: 0, payout: 0, units: 0 };
-      cur.gross += g; cur.commission += c; cur.payout += p; cur.units += 1;
-      bySeller.set(it.seller_id, cur);
-
-      // bucket the seller payout into a half-month period by order date
-      const created = it.orders?.created_at;
-      if (created) {
-        const { start, end } = halfMonth(created);
-        const key = `${it.seller_id}|${start}`;
-        const b = buckets.get(key) || { seller_id: it.seller_id, start, end, amount: 0 };
-        b.amount += p;
-        buckets.set(key, b);
-      }
-    });
+    // ---- accounting: paid (settled) vs pending (projection) ----
+    const PAID = new Set(["paid", "processing", "shipped", "delivered"]);
+    const DEAD = new Set(["cancelled", "refunded"]);
 
     const storeName = new Map<string, string>();
     (sellers ?? []).forEach((s: any) => storeName.set(s.id, s.store_name));
 
-    const accountingRows = Array.from(bySeller.entries()).map(([sid, v]) => ({
-      seller_id: sid,
-      store_name: storeName.get(sid) || "(unknown)",
-      gross_cents: v.gross,
-      commission_cents: v.commission,
-      payout_cents: v.payout,
-      line_items: v.units,
-    })).sort((a, b) => b.gross_cents - a.gross_cents);
+    let paidGross = 0, paidCommission = 0, paidSellerAmt = 0;
+    let pendGross = 0, pendCommission = 0, pendSellerAmt = 0;
 
-    // existing payout records (what's already been marked paid)
-    const { data: paidRows } = await admin
-      .from("seller_payouts")
-      .select("seller_id, period_start, status, paid_at");
-    const paidMap = new Map<string, { status: string; paid_at: string | null }>();
-    (paidRows ?? []).forEach((r: any) =>
-      paidMap.set(`${r.seller_id}|${r.period_start}`, { status: r.status, paid_at: r.paid_at })
-    );
+    const monthMap = new Map<string, { gross: number; commission: number; orders: number }>();
+    const sellerMap = new Map<string, { gross: number; commission: number; sellerAmt: number; orders: number }>();
 
-    const todayISO = new Date().toISOString().slice(0, 10);
-    const payoutsBySellerMap = new Map<string, any[]>();
-    Array.from(buckets.values()).forEach((b) => {
-      const key = `${b.seller_id}|${b.start}`;
-      const paidInfo = paidMap.get(key);
-      const paid = paidInfo?.status === "paid";
-      const closed = b.end < todayISO; // period has fully elapsed
-      const list = payoutsBySellerMap.get(b.seller_id) || [];
-      list.push({
-        period_start: b.start,
-        period_end: b.end,
-        label: periodLabel(b.start, b.end),
-        amount_cents: b.amount,
-        paid,
-        paid_at: paidInfo?.paid_at || null,
-        due: !paid && closed && b.amount > 0,
-      });
-      payoutsBySellerMap.set(b.seller_id, list);
+    (orders ?? []).forEach((o: any) => {
+      if (DEAD.has(o.status)) return;
+      const gross = o.subtotal_cents || 0;
+      const commission = o.commission_cents || 0;
+      const sellerAmt = o.seller_amount_cents != null ? o.seller_amount_cents : (gross - commission);
+      const isPaid = PAID.has(o.status);
+
+      if (isPaid) {
+        paidGross += gross; paidCommission += commission; paidSellerAmt += sellerAmt;
+        const when = o.paid_at || o.created_at;
+        if (when) {
+          const d = new Date(when);
+          const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+          const mb = monthMap.get(key) || { gross: 0, commission: 0, orders: 0 };
+          mb.gross += gross; mb.commission += commission; mb.orders += 1;
+          monthMap.set(key, mb);
+        }
+        if (o.seller_id) {
+          const sm = sellerMap.get(o.seller_id) || { gross: 0, commission: 0, sellerAmt: 0, orders: 0 };
+          sm.gross += gross; sm.commission += commission; sm.sellerAmt += sellerAmt; sm.orders += 1;
+          sellerMap.set(o.seller_id, sm);
+        }
+      } else {
+        pendGross += gross; pendCommission += commission; pendSellerAmt += sellerAmt;
+      }
     });
 
-    const bankBySeller = new Map<string, any>();
-    (sellers ?? []).forEach((s: any) => bankBySeller.set(s.id, {
-      bank_name: s.bank_name || null,
-      bank_account_number: s.bank_account_number || null,
-      bank_branch_code: s.bank_branch_code || null,
-      bank_account_type: s.bank_account_type || null,
-      complete: !!(s.bank_name && s.bank_account_number && s.bank_branch_code && s.bank_account_type),
-    }));
+    const commissionByMonth = Array.from(monthMap.entries())
+      .map(([month, v]) => {
+        const [y, m] = month.split("-");
+        return {
+          month,
+          label: `${MONTHS_LONG[Number(m) - 1]} ${y}`,
+          gross_cents: v.gross,
+          commission_cents: v.commission,
+          order_count: v.orders,
+        };
+      })
+      .sort((a, b) => (a.month < b.month ? 1 : -1));
 
-    const payouts = Array.from(payoutsBySellerMap.entries()).map(([sid, periods]) => ({
-      seller_id: sid,
-      store_name: storeName.get(sid) || "(unknown)",
-      banking: bankBySeller.get(sid) || { complete: false },
-      periods: periods.sort((a: any, b: any) => (a.period_start < b.period_start ? 1 : -1)),
-    })).sort((a, b) => (a.store_name > b.store_name ? 1 : -1));
+    const bySeller = Array.from(sellerMap.entries())
+      .map(([sid, v]) => ({
+        seller_id: sid,
+        store_name: storeName.get(sid) || "(unknown)",
+        gross_cents: v.gross,
+        commission_cents: v.commission,
+        seller_amount_cents: v.sellerAmt,
+        order_count: v.orders,
+      }))
+      .sort((a, b) => b.commission_cents - a.commission_cents);
 
     return NextResponse.json({
       products: products ?? [],
@@ -201,9 +145,10 @@ export async function GET(req: Request) {
       sellers: sellers ?? [],
       orders: orders ?? [],
       accounting: {
-        totals: { gross_cents: grossAll, commission_cents: commissionAll, payout_cents: payoutAll },
-        bySeller: accountingRows,
-        payouts,
+        paid: { gross_cents: paidGross, commission_cents: paidCommission, seller_amount_cents: paidSellerAmt },
+        pending: { gross_cents: pendGross, commission_cents: pendCommission, seller_amount_cents: pendSellerAmt },
+        commissionByMonth,
+        bySeller,
       },
     });
   } catch (e: any) {
@@ -278,7 +223,6 @@ export async function POST(req: Request) {
         if (!secret)
           return NextResponse.json({ error: "Paystack not configured (PAYSTACK_SECRET_KEY missing)." }, { status: 500 });
 
-        // load the seller's banking + plan
         const { data: seller, error: sErr } = await admin
           .from("sellers")
           .select("id, store_name, plan, bank_account_number, paystack_bank_code, paystack_subaccount_code")
@@ -291,7 +235,6 @@ export async function POST(req: Request) {
         if (!seller.paystack_bank_code || !seller.bank_account_number)
           return NextResponse.json({ error: "Seller must choose a bank and account number first." }, { status: 400 });
 
-        // commission % by plan (fallback default; checkout overrides per-transaction)
         const pct = seller.plan === "growth" ? 5 : 8;
 
         const res = await fetch("https://api.paystack.co/subaccount", {
@@ -322,42 +265,12 @@ export async function POST(req: Request) {
 
         return NextResponse.json({ ok: true, subaccount_code: subaccountCode });
       }
-      case "pay_payout": {
-        const sellerId = String(body?.sellerId || "");
-        const periodStart = String(body?.periodStart || "");
-        const periodEnd = String(body?.periodEnd || "");
-        const amountCents = Math.max(0, Math.floor(Number(body?.amountCents) || 0));
-        if (!sellerId || !periodStart || !periodEnd)
-          return NextResponse.json({ error: "Missing payout details" }, { status: 400 });
-        const { error } = await admin
-          .from("seller_payouts")
-          .upsert(
-            { seller_id: sellerId, period_start: periodStart, period_end: periodEnd, amount_cents: amountCents, status: "paid", paid_at: now },
-            { onConflict: "seller_id,period_start" }
-          );
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-        return NextResponse.json({ ok: true });
-      }
-      case "unpay_payout": {
-        const sellerId = String(body?.sellerId || "");
-        const periodStart = String(body?.periodStart || "");
-        if (!sellerId || !periodStart)
-          return NextResponse.json({ error: "Missing payout details" }, { status: 400 });
-        const { error } = await admin
-          .from("seller_payouts")
-          .delete()
-          .eq("seller_id", sellerId)
-          .eq("period_start", periodStart);
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-        return NextResponse.json({ ok: true });
-      }
       case "approve_review": {
         const reviewId = String(body?.reviewId || "");
         if (!reviewId) return NextResponse.json({ error: "Missing reviewId" }, { status: 400 });
         const { data: rev, error: e1 } = await admin
           .from("reviews").update({ is_approved: true }).eq("id", reviewId).select("product_id").single();
         if (e1 || !rev) return NextResponse.json({ error: e1?.message || "not found" }, { status: 500 });
-        // recompute the product's rating + review_count from approved reviews
         const { data: approved } = await admin
           .from("reviews").select("rating").eq("product_id", rev.product_id).eq("is_approved", true);
         const list = approved ?? [];
@@ -373,13 +286,12 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true });
       }
       case "mark_order_paid": {
-        // TESTING AID: flip an order to paid so the fulfilment/waybill flow can
-        // be exercised before PayFast settlement is live.
+        // TESTING AID: flip an order to paid. Now a fallback since the Paystack webhook is live.
         const orderId = String(body?.orderId || "");
         if (!orderId) return NextResponse.json({ error: "Missing orderId" }, { status: 400 });
         const { error } = await admin
           .from("orders")
-          .update({ status: "paid", updated_at: new Date().toISOString() })
+          .update({ status: "paid", paid_at: now, updated_at: now })
           .eq("id", orderId);
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         return NextResponse.json({ ok: true });
@@ -389,7 +301,7 @@ export async function POST(req: Request) {
         if (!orderId) return NextResponse.json({ error: "Missing orderId" }, { status: 400 });
         const { error } = await admin
           .from("orders")
-          .update({ status: "pending", updated_at: new Date().toISOString() })
+          .update({ status: "pending", paid_at: null, updated_at: now })
           .eq("id", orderId);
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         return NextResponse.json({ ok: true });
