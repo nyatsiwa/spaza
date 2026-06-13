@@ -267,9 +267,12 @@ export async function POST(req: Request) {
           currency: "ZAR",
           callback_url: `${appUrl}/seller/dashboard?subscription=growth`,
           metadata: {
+            // The webhook keys off metadata.type === "growth_subscription"
+            // to route this charge to the subscription handler (not the
+            // product-order handler). Keep this name in sync with the webhook.
+            type: "growth_subscription",
             seller_id: sellerId,
             user_id: user.id,
-            purpose: "growth_subscription",
           },
         }),
       }
