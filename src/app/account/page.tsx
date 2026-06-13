@@ -135,6 +135,9 @@ export default function AccountPage() {
             <div style={{ fontFamily: 'var(--font-bebas)', fontSize: 30, letterSpacing: 1 }}>
               SPA<span style={{ color: '#F4B400' }}>ZA</span>
             </div>
+            {form.full_name.trim() ? (
+              <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>{form.full_name.trim()}</div>
+            ) : null}
             <p style={{ opacity: 0.8, fontSize: 13, marginTop: 2 }}>My account · {email}</p>
           </div>
           <button onClick={handleLogout}
