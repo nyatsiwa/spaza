@@ -12,21 +12,16 @@ import {
  *
  * Free  -> seller goes ACTIVE instantly, an active subscription row is created,
  *          returns { activated: true }. No payment involved.
- * Growth-> seller is created/kept PENDING for Growth; we initialize a Paystack
- *          transaction tied to the Growth PLAN so Paystack sets up the monthly
- *          R70 subscription. Returns { authorizationUrl }. The webhook activates
- *          the seller's Growth plan once the first charge succeeds.
+ * Growth-> seller is created/kept PENDING, returns { pending: true } for now.
+ *          (Paystack subscription billing gets wired here later — see the TODO
+ *          block below.)
  */
-
-const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY || "";
-const GROWTH_PLAN_CODE = process.env.PAYSTACK_GROWTH_PLAN_CODE || "";
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "";
-
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
     const plan = String(body?.plan || "").toLowerCase();
 
+    // ---- 1. Validate plan -------------------------------------------------
     if (plan !== "free" && plan !== "growth") {
       return NextResponse.json(
         { error: "Invalid plan. Choose 'free' or 'growth'." },
@@ -35,8 +30,11 @@ export async function POST(req: Request) {
     }
     const planConfig = SELLER_PLANS[plan] ?? SELLER_PLANS.free;
 
-    // ---- Authenticate (bearer token first, cookie fallback) ----
+    // ---- 2. Authenticate the user ----------------------------------------
+    // Prefer the bearer token (same pattern as checkout, which is reliable in
+    // route handlers); fall back to the cookie session if no token is sent.
     const admin = createAdminClient();
+
     let user = null as { id: string; email?: string } | null;
 
     const authHeader = req.headers.get("authorization");
@@ -59,7 +57,7 @@ export async function POST(req: Request) {
 
     const now = new Date().toISOString();
 
-    // ---- Find or create the seller row ----
+    // ---- 3. Find or create the seller row --------------------------------
     const { data: existingSeller, error: sellerLookupErr } = await admin
       .from("sellers")
       .select("id, status, plan, approved_at")
@@ -76,12 +74,18 @@ export async function POST(req: Request) {
     let sellerId: string;
 
     if (existingSeller) {
+      // Existing seller (e.g. Eden Extract): update plan.
+      // Free -> activate. Growth -> leave current status (activates on payment).
       sellerId = existingSeller.id;
       const update: Record<string, unknown> = { plan, updated_at: now };
       if (plan === "free") {
         update.status = "active";
+        // Free = auto-approved instantly. Keep an existing approval date if
+        // there is one, otherwise stamp it now so the store is visible even if
+        // the storefront filters on approved_at.
         update.approved_at = (existingSeller as any).approved_at ?? now;
       }
+
       const { error: updErr } = await admin
         .from("sellers")
         .update(update)
@@ -93,6 +97,8 @@ export async function POST(req: Request) {
         );
       }
     } else {
+      // New seller. We only have a plan choice from /sell, so derive a store
+      // name/slug. (A fuller onboarding form can overwrite these later.)
       let profileName: string | null = null;
       const { data: profile } = await admin
         .from("profiles")
@@ -140,8 +146,12 @@ export async function POST(req: Request) {
       sellerId = created.id;
     }
 
-    // ---- FREE: activate subscription immediately ----
+    // ---- 4. FREE: activate subscription immediately ----------------------
     if (plan === "free") {
+      // Free never bills, but current_period_end / next_billing_date are
+      // NOT NULL in the DB. Use a far-future "forever" sentinel so the row
+      // satisfies the constraint without implying a real charge (amount is 0
+      // and there's no billing token, so no billing job will ever touch it).
       const farFuture = new Date();
       farFuture.setFullYear(farFuture.getFullYear() + 100);
       const forever = farFuture.toISOString();
@@ -152,8 +162,8 @@ export async function POST(req: Request) {
         status: "active",
         amount_cents: 0,
         current_period_start: now,
-        current_period_end: forever,
-        next_billing_date: forever,
+        current_period_end: forever, // free plan: never expires
+        next_billing_date: forever, // free plan: never billed
         cancelled_at: null,
         updated_at: now,
       };
@@ -187,91 +197,26 @@ export async function POST(req: Request) {
         }
       }
 
-      return NextResponse.json({ activated: true, plan: "free", sellerId });
+      return NextResponse.json({
+        activated: true,
+        plan: "free",
+        sellerId,
+      });
     }
 
-    // ---- GROWTH: start Paystack subscription via plan-linked transaction ----
-    if (!PAYSTACK_SECRET) {
-      return NextResponse.json(
-        { error: "Payments are not configured (PAYSTACK_SECRET_KEY missing)." },
-        { status: 500 }
-      );
-    }
-    if (!GROWTH_PLAN_CODE) {
-      return NextResponse.json(
-        { error: "Growth plan is not configured yet (PAYSTACK_GROWTH_PLAN_CODE missing). Please try again later." },
-        { status: 503 }
-      );
-    }
-    if (!user.email) {
-      return NextResponse.json(
-        { error: "Your account has no email address for billing." },
-        { status: 400 }
-      );
-    }
-
-    // Unique reference for this subscription sign-up.
-    const ref = `SUBGROWTH-${sellerId.slice(0, 8)}-${Date.now().toString(36)}`;
-
-    // Initializing a transaction WITH a plan code makes Paystack set up the
-    // recurring subscription automatically once the customer pays. The plan's
-    // amount overrides any amount we pass.
-    const initRes = await fetch("https://api.paystack.co/transaction/initialize", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${PAYSTACK_SECRET}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: user.email,
-        plan: GROWTH_PLAN_CODE,
-        reference: ref,
-        callback_url: `${APP_URL}/seller/dashboard?growth=activating`,
-        metadata: {
-          type: "growth_subscription",
-          seller_id: sellerId,
-          user_id: user.id,
-        },
-      }),
-    });
-    const initJson = await initRes.json().catch(() => ({} as any));
-    if (!initRes.ok || !initJson?.status || !initJson?.data?.authorization_url) {
-      return NextResponse.json(
-        { error: initJson?.message || "Could not start the Growth subscription.", detail: initJson },
-        { status: 502 }
-      );
-    }
-
-    // Record a pending subscription row so we have something to reconcile.
-    const { data: existingSub } = await admin
-      .from("seller_subscriptions")
-      .select("id")
-      .eq("seller_id", sellerId)
-      .maybeSingle();
-
-    const pendingSub: Record<string, unknown> = {
-      seller_id: sellerId,
-      plan: "growth",
-      status: "pending",
-      amount_cents: 7000,
-      paystack_reference: ref,
-      updated_at: now,
-    };
-    if (existingSub) {
-      await admin.from("seller_subscriptions").update(pendingSub).eq("id", existingSub.id);
-    } else {
-      // include NOT NULL period columns with near-term sentinels; webhook fills real values
-      pendingSub.current_period_start = now;
-      pendingSub.current_period_end = now;
-      pendingSub.next_billing_date = now;
-      await admin.from("seller_subscriptions").insert(pendingSub);
-    }
-
+    // ---- 5. GROWTH: gated on Paystack subscription billing --------------
+    // The seller now exists (pending). The recurring R70/mo subscription will
+    // be wired via Paystack (plans + subscriptions) in a later step.
+    //
+    // TODO (Paystack): create/charge a Paystack subscription for the R70/mo
+    // Growth plan here, then activate the seller + subscription on success.
+    //
     return NextResponse.json({
-      authorizationUrl: initJson.data.authorization_url,
-      reference: ref,
+      pending: true,
       plan: "growth",
       sellerId,
+      message:
+        "Growth plan selected. The R70/month subscription activates once billing is set up.",
     });
   } catch (err: any) {
     return NextResponse.json(
