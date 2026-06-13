@@ -63,20 +63,14 @@ export default function SellPage() {
 
       // Free plan: no payment — seller is active immediately.
       if (data.activated) {
-        toast.success('You are now a Spaza seller! 🎉')
+        toast.success('You are now a Spaza seller!')
         router.push('/account')
         return
       }
 
-      // Growth plan: redirect to PayFast for the monthly subscription.
-      if (data.payfast) {
-        const { url, fields } = data.payfast as { url: string; fields: Record<string, string> }
-        const form = document.createElement('form')
-        form.method = 'POST'; form.action = url
-        Object.entries(fields).forEach(([k, v]) => {
-          const i = document.createElement('input'); i.type = 'hidden'; i.name = k; i.value = v; form.appendChild(i)
-        })
-        document.body.appendChild(form); form.submit()
+      // Growth plan: redirect to Paystack to set up the monthly subscription.
+      if (data.authorizationUrl) {
+        window.location.assign(data.authorizationUrl)
         return
       }
 
@@ -131,7 +125,7 @@ export default function SellPage() {
             <ul style={{ listStyle: 'none', padding: 0, margin: '18px 0 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {p.features.map(f => (
                 <li key={f.label} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, color: f.included ? C.g800 : C.g400 }}>
-                  <span style={{ color: f.included ? C.green : C.g200, fontWeight: 700 }}>{f.included ? '✓' : '✕'}</span>
+                  <span style={{ color: f.included ? C.green : C.g200, fontWeight: 700 }}>{f.included ? '✓' : '✗'}</span>
                   <span>{f.label}</span>
                 </li>
               ))}
@@ -150,9 +144,9 @@ export default function SellPage() {
       </div>
 
       <p style={{ textAlign: 'center', color: C.g400, fontSize: 13, padding: '0 20px 50px', maxWidth: 620, margin: '0 auto' }}>
-        Commission is deducted automatically from each sale; the balance is paid to your bank account every 2 weeks via PayFast.
+        Commission is deducted automatically from each sale; the balance is paid to your bank account every 2 weeks.
         The Growth plan is billed monthly and can be cancelled anytime. By selling you agree to the{' '}
-        <a href="/seller-agreement" style={{ color: C.red }}>Seller Agreement</a>.
+        <a href="/terms" style={{ color: C.red }}>Terms &amp; Conditions</a>.
       </p>
     </div>
   )

@@ -5,37 +5,29 @@ import { createAdminClient } from "@/lib/supabase-server";
 /**
  * POST /api/paystack/webhook
  *
- * Paystack calls this after payment events. We:
- *   1. Verify the x-paystack-signature header (HMAC-SHA512 of the RAW body,
- *      keyed with our secret key). This must use the raw, unmodified body —
- *      re-serialising JSON would break the hash.
- *   2. On charge.success, match the reference -> order -> flip to "paid".
- *      Marking an order paid auto-unlocks the seller's waybill flow.
+ * Handles two kinds of events, distinguished by metadata.type:
+ *   - product orders (default): charge.success -> mark order paid
+ *   - growth_subscription: charge.success / subscription.create ->
+ *       activate seller Growth; subscription.disable / invoice.payment_failed ->
+ *       downgrade seller to Free and hide products over the Free limit.
  *
- * Always returns 200 quickly once verified so Paystack doesn't retry; any
- * processing problems are logged but not surfaced as non-200 (which would
- * trigger retries). A failed signature returns 401.
+ * Signature: HMAC-SHA512 of the RAW body keyed with the secret key.
  */
 
-// Ensure this runs on the Node.js runtime (crypto + raw body).
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SECRET = process.env.PAYSTACK_SECRET_KEY || "";
+const FREE_PRODUCT_LIMIT = 5;
 
 export async function POST(req: Request) {
-  // Read the RAW body exactly as sent (do not JSON.parse before hashing).
   const raw = await req.text();
 
-  // 1. Verify signature
   const signature = req.headers.get("x-paystack-signature") || "";
   if (!SECRET) {
-    // Misconfiguration — don't process, but don't make Paystack retry forever.
     return NextResponse.json({ error: "Webhook not configured." }, { status: 500 });
   }
   const expected = crypto.createHmac("sha512", SECRET).update(raw).digest("hex");
-
-  // constant-time compare
   const sigBuf = Buffer.from(signature);
   const expBuf = Buffer.from(expected);
   const valid =
@@ -44,7 +36,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid signature." }, { status: 401 });
   }
 
-  // 2. Parse and handle the event
   let event: any = {};
   try {
     event = JSON.parse(raw);
@@ -52,19 +43,138 @@ export async function POST(req: Request) {
     return NextResponse.json({ received: true }, { status: 200 });
   }
 
+  const admin = createAdminClient();
+  const now = new Date().toISOString();
+  const type = event?.event || "";
+  const data = event?.data || {};
+  const metaType = data?.metadata?.type || "";
+
   try {
-    if (event?.event === "charge.success") {
-      const data = event.data || {};
+    // ---------- GROWTH SUBSCRIPTION EVENTS ----------
+    // First charge / subscription creation: activate Growth.
+    if (
+      (type === "charge.success" && metaType === "growth_subscription") ||
+      type === "subscription.create"
+    ) {
+      // seller_id: from our metadata (charge.success) or by matching the
+      // subscription's plan + customer for subscription.create.
+      let sellerId: string = data?.metadata?.seller_id || "";
+      const reference: string = data?.reference || "";
+      const subscriptionCode: string = data?.subscription_code || data?.subscription?.subscription_code || "";
+      const emailToken: string = data?.email_token || "";
+      const nextPayment: string = data?.next_payment_date || data?.subscription?.next_payment_date || "";
+
+      // Fallback: find seller by the pending subscription reference.
+      if (!sellerId && reference) {
+        const { data: subRow } = await admin
+          .from("seller_subscriptions")
+          .select("seller_id")
+          .eq("paystack_reference", reference)
+          .maybeSingle();
+        sellerId = subRow?.seller_id || "";
+      }
+
+      if (sellerId) {
+        // activate the seller on Growth
+        await admin
+          .from("sellers")
+          .update({ plan: "growth", status: "active", approved_at: now, updated_at: now })
+          .eq("id", sellerId);
+
+        // update the subscription row
+        const periodEnd = nextPayment || (() => {
+          const d = new Date(); d.setMonth(d.getMonth() + 1); return d.toISOString();
+        })();
+        const subPatch: Record<string, unknown> = {
+          plan: "growth",
+          status: "active",
+          amount_cents: 7000,
+          current_period_start: now,
+          current_period_end: periodEnd,
+          next_billing_date: periodEnd,
+          cancelled_at: null,
+          updated_at: now,
+        };
+        if (subscriptionCode) subPatch.paystack_subscription_code = subscriptionCode;
+        if (emailToken) subPatch.paystack_email_token = emailToken;
+
+        const { data: existingSub } = await admin
+          .from("seller_subscriptions")
+          .select("id")
+          .eq("seller_id", sellerId)
+          .maybeSingle();
+        if (existingSub) {
+          await admin.from("seller_subscriptions").update(subPatch).eq("id", existingSub.id);
+        } else {
+          await admin.from("seller_subscriptions").insert({ seller_id: sellerId, ...subPatch });
+        }
+      }
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    // Subscription ended / payment failed: downgrade to Free + hide excess products.
+    if (type === "subscription.disable" || type === "invoice.payment_failed") {
+      const subscriptionCode: string =
+        data?.subscription_code || data?.subscription?.subscription_code || "";
+      let sellerId = "";
+
+      if (subscriptionCode) {
+        const { data: subRow } = await admin
+          .from("seller_subscriptions")
+          .select("seller_id")
+          .eq("paystack_subscription_code", subscriptionCode)
+          .maybeSingle();
+        sellerId = subRow?.seller_id || "";
+      }
+
+      if (sellerId) {
+        // downgrade seller to Free
+        await admin
+          .from("sellers")
+          .update({ plan: "free", updated_at: now })
+          .eq("id", sellerId);
+
+        // subscription row -> cancelled/free
+        const { data: existingSub } = await admin
+          .from("seller_subscriptions")
+          .select("id")
+          .eq("seller_id", sellerId)
+          .maybeSingle();
+        if (existingSub) {
+          await admin
+            .from("seller_subscriptions")
+            .update({ plan: "free", status: "cancelled", cancelled_at: now, amount_cents: 0, updated_at: now })
+            .eq("id", existingSub.id);
+        }
+
+        // hide products over the Free limit: keep the 5 OLDEST active, hide the rest
+        const { data: activeProducts } = await admin
+          .from("products")
+          .select("id, created_at")
+          .eq("seller_id", sellerId)
+          .eq("status", "active")
+          .order("created_at", { ascending: true });
+        const list = activeProducts ?? [];
+        if (list.length > FREE_PRODUCT_LIMIT) {
+          const toHide = list.slice(FREE_PRODUCT_LIMIT).map((p: any) => p.id);
+          if (toHide.length) {
+            await admin
+              .from("products")
+              .update({ status: "draft", updated_at: now })
+              .in("id", toHide);
+          }
+        }
+      }
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    // ---------- PRODUCT ORDER EVENTS ----------
+    if (type === "charge.success" && metaType !== "growth_subscription") {
       const reference: string = data.reference || "";
       const orderIdMeta: string = data?.metadata?.order_id || "";
       const paystackStatus: string = data.status || "";
 
       if (paystackStatus === "success" && (reference || orderIdMeta)) {
-        const admin = createAdminClient();
-        const now = new Date().toISOString();
-
-        // Match by reference first (what we stored at checkout), fall back to
-        // the order_id we put in metadata.
         let query = admin.from("orders").select("id, status, paystack_reference");
         const { data: order } = reference
           ? await query.eq("paystack_reference", reference).maybeSingle()
@@ -79,8 +189,6 @@ export async function POST(req: Request) {
       }
     }
   } catch (e) {
-    // Log only — still return 200 so Paystack doesn't hammer retries on a
-    // transient DB hiccup; we can reconcile manually if needed.
     console.error("Paystack webhook processing error:", e);
   }
 
