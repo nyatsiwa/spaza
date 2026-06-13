@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase'
 
 const NAVY = '#0A1628'
 const RED = '#D6001C'
+const GREEN = '#00A651'
 
 const PROVINCES = [
   'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo',
@@ -188,6 +189,9 @@ export default function AccountPage() {
             </div>
           )}
 
+          {/* Two-factor authentication */}
+          <TwoFactorSection />
+
           <h2 style={{ fontSize: 18, fontWeight: 700, color: NAVY, margin: 0 }}>Shipping details</h2>
           <p style={{ fontSize: 13, color: '#666', marginTop: -8 }}>We use this to deliver your orders. <a href="/orders" style={{ color: RED, fontWeight: 600, textDecoration: 'none' }}>View my orders →</a></p>
 
@@ -220,6 +224,142 @@ export default function AccountPage() {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function TwoFactorSection() {
+  const supabase = createClient()
+  const [loading, setLoading] = useState(true)
+  const [enabled, setEnabled] = useState(false)
+  const [factorId, setFactorId] = useState('')
+
+  // enrolment flow state
+  const [enrolling, setEnrolling] = useState(false)
+  const [qr, setQr] = useState('')
+  const [secret, setSecret] = useState('')
+  const [pendingFactorId, setPendingFactorId] = useState('')
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function refresh() {
+    try {
+      const { data } = await supabase.auth.mfa.listFactors()
+      const totp = data?.totp?.[0]
+      if (totp) { setEnabled(true); setFactorId(totp.id) }
+      else { setEnabled(false); setFactorId('') }
+    } catch { /* ignore */ }
+    setLoading(false)
+  }
+
+  useEffect(() => { refresh() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [])
+
+  async function startEnrol() {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' })
+      if (error) { toast.error(error.message); setBusy(false); return }
+      setPendingFactorId(data.id)
+      setQr(data.totp?.qr_code || '')
+      setSecret(data.totp?.secret || '')
+      setEnrolling(true)
+    } catch (e: any) { toast.error(e?.message || 'Could not start 2FA setup') }
+    setBusy(false)
+  }
+
+  async function confirmEnrol() {
+    const c = code.trim()
+    if (c.length < 6) return toast.error('Enter the 6-digit code from your authenticator app')
+    setBusy(true)
+    try {
+      const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: pendingFactorId, code: c })
+      if (error) { toast.error(error.message || 'That code was not valid'); setBusy(false); return }
+      toast.success('Two-factor authentication enabled ✓')
+      setEnrolling(false); setQr(''); setSecret(''); setCode(''); setPendingFactorId('')
+      await refresh()
+    } catch (e: any) { toast.error(e?.message || 'Could not enable 2FA') }
+    setBusy(false)
+  }
+
+  async function cancelEnrol() {
+    // remove the half-created unverified factor
+    if (pendingFactorId) { try { await supabase.auth.mfa.unenroll({ factorId: pendingFactorId }) } catch { /* ignore */ } }
+    setEnrolling(false); setQr(''); setSecret(''); setCode(''); setPendingFactorId('')
+  }
+
+  async function disable2fa() {
+    if (!confirm('Turn off two-factor authentication? Your account will be less protected.')) return
+    setBusy(true)
+    try {
+      const { error } = await supabase.auth.mfa.unenroll({ factorId })
+      if (error) { toast.error(error.message); setBusy(false); return }
+      toast.success('Two-factor authentication turned off')
+      await refresh()
+    } catch (e: any) { toast.error(e?.message || 'Could not turn off 2FA') }
+    setBusy(false)
+  }
+
+  if (loading) return null
+
+  return (
+    <div style={{ border: '1px solid #e6e8eb', borderRadius: 12, padding: 16, background: '#fafbfc' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: NAVY }}>Two-factor authentication</div>
+          <div style={{ fontSize: 13, color: '#666', marginTop: 2 }}>
+            {enabled
+              ? <span style={{ color: GREEN, fontWeight: 600 }}>✓ On — your login is protected by an authenticator app</span>
+              : 'Add a second step at login using an authenticator app (Google Authenticator, Authy).'}
+          </div>
+        </div>
+        {!enrolling && (
+          enabled
+            ? <button onClick={disable2fa} disabled={busy}
+                style={{ background: 'none', border: `1px solid ${RED}`, color: RED, padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: busy ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                Turn off
+              </button>
+            : <button onClick={startEnrol} disabled={busy}
+                style={{ background: NAVY, color: '#fff', border: 'none', padding: '10px 16px', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: busy ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                {busy ? 'Please wait…' : 'Enable 2FA'}
+              </button>
+        )}
+      </div>
+
+      {enrolling && (
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #e6e8eb', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 13, color: '#333' }}>
+            1. Scan this QR code with your authenticator app (or enter the key manually).
+          </div>
+          {qr && (
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <img src={qr} alt="2FA QR code" style={{ width: 180, height: 180, background: '#fff', borderRadius: 8, border: '1px solid #eee' }} />
+            </div>
+          )}
+          {secret && (
+            <div style={{ fontSize: 12, color: '#666', textAlign: 'center' }}>
+              Manual key: <code style={{ background: '#fff', padding: '2px 6px', borderRadius: 4, border: '1px solid #eee', fontFamily: 'monospace', wordBreak: 'break-all' }}>{secret}</code>
+            </div>
+          )}
+          <div style={{ fontSize: 13, color: '#333' }}>2. Enter the 6-digit code it shows:</div>
+          <input
+            value={code}
+            onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            onKeyDown={e => { if (e.key === 'Enter') confirmEnrol() }}
+            inputMode="numeric"
+            placeholder="123456"
+            style={{ padding: '12px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 20, letterSpacing: 5, textAlign: 'center', outline: 'none', fontFamily: 'monospace' }} />
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={confirmEnrol} disabled={busy}
+              style={{ background: RED, color: '#fff', border: 'none', padding: '11px 18px', borderRadius: 9, fontWeight: 700, fontSize: 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1 }}>
+              {busy ? 'Verifying…' : 'Verify & enable'}
+            </button>
+            <button onClick={cancelEnrol} disabled={busy}
+              style={{ background: 'none', border: '1px solid #ccc', color: '#555', padding: '11px 18px', borderRadius: 9, fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
