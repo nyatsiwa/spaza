@@ -220,7 +220,7 @@ export async function POST(request: Request) {
       }
 
       // 6d. Initialise the Paystack transaction (split via subaccount + flat transaction_charge)
-      const reference = `SPZ-${order.order_number}-${Date.now().toString(36)}`
+      const reference = `${order.order_number}-${Date.now().toString(36)}`
       const initRes = await fetch('https://api.paystack.co/transaction/initialize', {
         method: 'POST',
         headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, 'Content-Type': 'application/json' },
@@ -277,3 +277,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
+
