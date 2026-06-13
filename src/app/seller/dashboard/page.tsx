@@ -365,6 +365,15 @@ export default function SellerDashboard() {
   const liveAddPct = pctOff(parseFloat(price) || 0, base.trim() ? parseFloat(base) : null)
   const liveEditPct = pctOff(parseFloat(ePrice) || 0, eBase.trim() ? parseFloat(eBase) : null)
 
+  // ----- dashboard summary stats (derived from products + orders) -----
+  const SETTLED = new Set(['paid', 'processing', 'shipped', 'delivered'])
+  const approvedCount = products.filter(p => p.status === 'active').length
+  const settledLines = orders.filter(o => SETTLED.has(o.orders?.status || ''))
+  const earningsCents = settledLines.reduce((sum, o) => sum + (o.seller_payout_cents || 0), 0)
+  const readyForCourier = settledLines.filter(o => !!o.tracking_number).length
+  const pendingWaybill = settledLines.filter(o => !o.tracking_number).length
+  const completedCount = orders.filter(o => o.orders?.status === 'delivered').length
+
   return (
     <div style={{ minHeight: '100vh', background: '#f4f5f7' }}>
       {/* header */}
@@ -399,6 +408,15 @@ export default function SellerDashboard() {
               On Growth (R70/mo) you can list up to 10 products with 3 photos each and pay only 5% commission. <a href="/sell" style={{ color: RED, fontWeight: 600 }}>Upgrade →</a>
             </div>
           )}
+        </div>
+
+        {/* summary stat cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
+          <StatCard label="Your earnings" value={money(earningsCents)} color={GREEN} hint="Settled to your account" big />
+          <StatCard label="Approved products" value={String(approvedCount)} color={NAVY} />
+          <StatCard label="Pending waybill" value={String(pendingWaybill)} color={pendingWaybill > 0 ? '#b26a00' : NAVY} hint="Paid — needs a waybill" />
+          <StatCard label="Ready for courier" value={String(readyForCourier)} color={readyForCourier > 0 ? GREEN : NAVY} hint="Waybill created" />
+          <StatCard label="Completed" value={String(completedCount)} color={NAVY} hint="Delivered" />
         </div>
 
         {/* payout / banking details */}
@@ -702,6 +720,16 @@ export default function SellerDashboard() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function StatCard({ label, value, color = NAVY, hint, big = false }: { label: string; value: string; color?: string; hint?: string; big?: boolean }) {
+  return (
+    <div style={{ background: '#fff', borderRadius: 12, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+      <div style={{ fontSize: 12, color: '#888' }}>{label}</div>
+      <div style={{ fontSize: big ? 26 : 30, fontWeight: 800, color, fontFamily: 'var(--font-bebas)', marginTop: 4, lineHeight: 1.1 }}>{value}</div>
+      {hint ? <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>{hint}</div> : null}
     </div>
   )
 }
