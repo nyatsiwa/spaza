@@ -298,52 +298,15 @@ export async function POST(req: Request) {
     const authorizationUrl = initJson.data.authorization_url as string;
     const reference = initJson.data.reference as string;
 
-    // Persist a PENDING growth subscription with the reference so the webhook
-    // can match the charge. period_end / next_billing_date are NOT NULL; the
-    // webhook overwrites them with real Paystack dates on activation. They're
-    // placeholders here and the row is `pending`, so no billing/active check
-    // should treat this as a live subscription yet.
-    const subData: Record<string, unknown> = {
-      seller_id: sellerId,
-      plan: "growth",
-      status: "pending",
-      amount_cents: 7000, // R70.00 — Growth monthly
-      paystack_reference: reference,
-      current_period_start: now,
-      current_period_end: now, // placeholder; webhook sets the real value
-      next_billing_date: now, // placeholder; webhook sets the real value
-      cancelled_at: null,
-      updated_at: now,
-    };
-
-    const { data: existingSub } = await admin
-      .from("seller_subscriptions")
-      .select("id")
-      .eq("seller_id", sellerId)
-      .maybeSingle();
-
-    if (existingSub) {
-      const { error: subUpdErr } = await admin
-        .from("seller_subscriptions")
-        .update(subData)
-        .eq("id", existingSub.id);
-      if (subUpdErr) {
-        return NextResponse.json(
-          { error: `Could not update subscription: ${subUpdErr.message}` },
-          { status: 500 }
-        );
-      }
-    } else {
-      const { error: subInsErr } = await admin
-        .from("seller_subscriptions")
-        .insert(subData);
-      if (subInsErr) {
-        return NextResponse.json(
-          { error: `Could not create subscription: ${subInsErr.message}` },
-          { status: 500 }
-        );
-      }
-    }
+    // NOTE: We deliberately do NOT write a seller_subscriptions row here.
+    // The subscription_status enum is {active, past_due, cancelled, expired} —
+    // there is no "pending" state, and a subscription only meaningfully exists
+    // once Paystack confirms payment. The seller row already carries status
+    // "pending" (set in section 3), which is the correct not-yet-paid state.
+    // The Paystack webhook creates the seller_subscriptions row with
+    // status "active" on charge.success, matching the seller via the
+    // metadata.seller_id we sent in the initialize call above (the `reference`
+    // is also available to the webhook for idempotency).
 
     return NextResponse.json({
       authorizationUrl,
