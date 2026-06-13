@@ -260,6 +260,11 @@ export async function POST(req: Request) {
         body: JSON.stringify({
           email,
           plan: planCode,
+          // Paystack's transaction/initialize validates an amount even when a
+          // plan is supplied (omitting it returns "Invalid Amount Sent").
+          // Amount is in the minor unit (kobo/cents): R70.00 = 7000.
+          amount: 7000,
+          currency: "ZAR",
           callback_url: `${appUrl}/seller/dashboard?subscription=growth`,
           metadata: {
             seller_id: sellerId,
