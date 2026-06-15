@@ -36,10 +36,10 @@ const REFUNDABLE_STATUSES = new Set([
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const orderId = params?.id;
+    const { id: orderId } = await params;
     if (!orderId) {
       return NextResponse.json({ error: "Missing order id." }, { status: 400 });
     }

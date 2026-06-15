@@ -50,10 +50,10 @@ async function adminGuard(req: Request, admin: ReturnType<typeof createAdminClie
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const refundId = params?.id;
+    const { id: refundId } = await params;
     if (!refundId) {
       return NextResponse.json({ error: "Missing refund id." }, { status: 400 });
     }
