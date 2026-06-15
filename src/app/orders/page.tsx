@@ -20,15 +20,37 @@ const STATUS: Record<string, { label: string; color: string }> = {
   processing: { label: 'Processing', color: '#0A1628' },
   shipped: { label: 'Shipped', color: '#0A1628' },
   delivered: { label: 'Delivered', color: '#00A651' },
+  refund_requested: { label: 'Refund requested', color: '#b26a00' },
   cancelled: { label: 'Cancelled', color: '#D6001C' },
   refunded: { label: 'Refunded', color: '#888' },
 }
 
+// reasons offered to the buyer
+const REASONS: { value: string; label: string }[] = [
+  { value: 'defective', label: 'Item is faulty / damaged' },
+  { value: 'not_as_described', label: 'Not as described' },
+  { value: 'discretionary', label: 'Changed my mind (within 7 days)' },
+]
+
+// order statuses where a refund can still be requested
+const REFUNDABLE = new Set(['paid', 'processing', 'shipped', 'delivered'])
+
+// human labels for an existing refund's status
+const REFUND_LABEL: Record<string, string> = {
+  requested: 'Refund requested — under review',
+  approved: 'Refund approved',
+  processing: 'Refund processing',
+  processed: 'Refunded',
+  rejected: 'Refund declined',
+  failed: 'Refund failed — please contact support',
+}
+
 interface OrderItem { id: string; product_name: string; product_image: string | null; quantity: number; total_cents: number }
+interface OrderRefund { id: string; status: string; reason_type: string }
 interface Order {
   id: string; order_number: string; status: string; total_cents: number; subtotal_cents: number;
   shipping_cents: number; shipping_city: string | null; shipping_province: string | null;
-  created_at: string; order_items: OrderItem[]
+  created_at: string; order_items: OrderItem[]; order_refunds?: OrderRefund[]
 }
 
 export default function OrdersPage() {
@@ -36,14 +58,31 @@ export default function OrdersPage() {
   const supabase = createClient()
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
+  const [fullName, setFullName] = useState('')
+  // tracks orders the buyer just requested a refund on (instant UI update)
+  const [justRequested, setJustRequested] = useState<Record<string, boolean>>({})
+  // which order's reason picker is open
+  const [pickerFor, setPickerFor] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let on = true
     ;(async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login?redirect=/orders'); return }
+
+      // Fetch the buyer's name for the header greeting.
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single()
+        if (on && profile?.full_name) setFullName(profile.full_name)
+      } catch { /* ignore */ }
+
       const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/orders`
-        + `?select=id,order_number,status,total_cents,subtotal_cents,shipping_cents,shipping_city,shipping_province,created_at,order_items(id,product_name,product_image,quantity,total_cents)`
+        + `?select=id,order_number,status,total_cents,subtotal_cents,shipping_cents,shipping_city,shipping_province,created_at,order_items(id,product_name,product_image,quantity,total_cents),order_refunds(id,status,reason_type)`
         + `&buyer_id=eq.${user.id}&order=created_at.desc`
       try {
         const { data: { session } } = await supabase.auth.getSession()
@@ -65,12 +104,97 @@ export default function OrdersPage() {
     return () => { on = false }
   }, [router, supabase])
 
+  async function requestRefund(orderId: string, reason: string) {
+    setBusy(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      const res = await fetch(`/api/orders/${orderId}/refund-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token || ''}` },
+        body: JSON.stringify({ reason_type: reason }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { alert(json?.error || 'Could not submit refund request.'); setBusy(false); return }
+      setJustRequested(prev => ({ ...prev, [orderId]: true }))
+      setPickerFor(null)
+    } catch {
+      alert('Could not submit refund request. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function renderRefundArea(o: Order) {
+    const existing = Array.isArray(o.order_refunds) ? o.order_refunds[0] : null
+    const localStatus = justRequested[o.id] ? 'requested' : existing?.status
+
+    // existing/just-made refund -> show status, no button
+    if (localStatus) {
+      const isDead = localStatus === 'rejected' || localStatus === 'failed'
+      return (
+        <div style={{ fontSize: 12, fontWeight: 700, color: isDead ? '#B5001A' : C.g600 }}>
+          {REFUND_LABEL[localStatus] || ('Refund: ' + localStatus)}
+        </div>
+      )
+    }
+
+    // not eligible -> nothing
+    if (!REFUNDABLE.has(o.status)) return null
+
+    // reason picker open
+    if (pickerFor === o.id) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+          <div style={{ fontSize: 12, color: C.g600, fontWeight: 600 }}>Reason for refund:</div>
+          {REASONS.map(r => (
+            <button
+              key={r.value}
+              disabled={busy}
+              onClick={() => requestRefund(o.id, r.value)}
+              style={{
+                background: '#fff', color: C.navy, border: `1px solid ${C.g100}`, borderRadius: 8,
+                padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: busy ? 'default' : 'pointer',
+                opacity: busy ? 0.6 : 1, textAlign: 'right', minWidth: 200,
+              }}
+            >
+              {r.label}
+            </button>
+          ))}
+          <button
+            onClick={() => setPickerFor(null)}
+            disabled={busy}
+            style={{ background: 'transparent', color: C.g400, border: 'none', fontSize: 11, textDecoration: 'underline', cursor: 'pointer' }}
+          >
+            Cancel
+          </button>
+        </div>
+      )
+    }
+
+    // default -> the request button
+    return (
+      <button
+        onClick={() => setPickerFor(o.id)}
+        style={{
+          background: 'transparent', color: C.g600, border: `1px solid ${C.g100}`, borderRadius: 8,
+          padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+        }}
+      >
+        Request refund
+      </button>
+    )
+  }
+
   return (
     <div style={{ fontFamily: 'var(--font-dm-sans)', background: C.offWhite, color: C.g800, minHeight: '100vh' }}>
       <div style={{ background: C.red, padding: '0 20px', height: 60, display: 'flex', alignItems: 'center' }}>
         <div style={{ maxWidth: 900, margin: 'auto', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Link href="/" style={{ fontFamily: 'var(--font-bebas)', fontSize: 30, color: C.white, letterSpacing: 2, textDecoration: 'none' }}>SPA<span style={{ color: C.gold }}>ZA</span></Link>
-          <Link href="/account" style={{ color: '#fff', fontSize: 13, textDecoration: 'none' }}>My account</Link>
+          <Link href="/account" style={{ color: '#fff', fontSize: 13, textDecoration: 'none', textAlign: 'right', lineHeight: 1.3 }}>
+            {fullName ? <span style={{ display: 'block', fontWeight: 700, fontSize: 14 }}>{fullName}</span> : null}
+            <span style={{ opacity: fullName ? 0.85 : 1 }}>My account</span>
+          </Link>
         </div>
       </div>
 
@@ -109,9 +233,12 @@ export default function OrdersPage() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', borderTop: `1px solid ${C.g100}`, fontSize: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '12px 16px', borderTop: `1px solid ${C.g100}`, fontSize: 14, gap: 12, flexWrap: 'wrap' }}>
                     <span style={{ color: C.g600 }}>{o.shipping_city ? `Ship to ${o.shipping_city}, ${o.shipping_province}` : 'Total'}</span>
                     <span style={{ fontWeight: 700, color: C.navy }}>{money(o.total_cents)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 16px 14px' }}>
+                    {renderRefundArea(o)}
                   </div>
                 </div>
               )
