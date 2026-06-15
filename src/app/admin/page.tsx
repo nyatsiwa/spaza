@@ -27,6 +27,12 @@ interface OrderRow {
   id: string; order_number: string; status: string; subtotal_cents: number;
   shipping_cents: number; total_cents: number; shipping_name: string; created_at: string
 }
+interface RefundRow {
+  id: string; order_id: string; reason_type: string; reason_note: string | null;
+  amount_cents: number; status: string; paystack_refund_status: string | null;
+  seller_recovery_status: string; requested_at: string;
+  orders?: { order_number: string } | null; sellers?: { store_name: string } | null
+}
 interface AcctSeller {
   seller_id: string; store_name: string; gross_cents: number; commission_cents: number; seller_amount_cents: number; order_count: number
 }
@@ -35,6 +41,7 @@ interface MonthRow {
 }
 interface Data {
   products: ProductRow[]; pending: ProductRow[]; sellers: SellerRow[]; orders: OrderRow[];
+  refunds: RefundRow[];
   pendingReviews: { id: string; product_id: string; rating: number; title: string | null; body: string | null; created_at: string; products?: { name: string } | null }[];
   accounting: {
     paid: { gross_cents: number; commission_cents: number; seller_amount_cents: number };
@@ -44,11 +51,33 @@ interface Data {
   }
 }
 
-type Tab = 'pending' | 'products' | 'sellers' | 'orders' | 'reviews' | 'accounting'
+type Tab = 'pending' | 'products' | 'sellers' | 'orders' | 'refunds' | 'reviews' | 'accounting'
 
 const statusColor: Record<string, string> = {
   active: GREEN, pending: GOLD, rejected: RED, removed: '#999', draft: '#999',
   out_of_stock: '#b26a00', suspended: RED, terminated: '#999',
+  refund_requested: '#b26a00', refunded: '#888',
+}
+
+// friendly labels for refund reasons + statuses
+const REASON_LABEL: Record<string, string> = {
+  defective: 'Faulty / damaged',
+  not_as_described: 'Not as described',
+  discretionary: 'Changed mind (7-day)',
+}
+const REFUND_STATUS_LABEL: Record<string, string> = {
+  requested: 'Awaiting review',
+  approved: 'Approved',
+  processing: 'Processing',
+  processed: 'Refunded',
+  rejected: 'Declined',
+  failed: 'Failed',
+}
+const RECOVERY_LABEL: Record<string, string> = {
+  pending: '',
+  auto_reversed: 'Seller share auto-reversed',
+  chase_seller: 'Check: recover seller share',
+  resolved: 'Seller share resolved',
 }
 
 export default function AdminDashboard() {
@@ -108,15 +137,26 @@ export default function AdminDashboard() {
   function createSubaccount(id: string) { act({ action: 'create_subaccount', sellerId: id }, 'sa' + id) }
   function approveReview(id: string) { act({ action: 'approve_review', reviewId: id }, 'r' + id) }
   function rejectReview(id: string) { if (confirm('Delete this review? This cannot be undone.')) act({ action: 'reject_review', reviewId: id }, 'r' + id) }
+  function approveRefund(id: string) {
+    if (confirm('Approve this refund? This issues the money back to the buyer via Paystack and cannot be undone.')) act({ action: 'approve_refund', refundId: id }, 'rf' + id)
+  }
+  function rejectRefund(id: string) {
+    const note = window.prompt('Reason for declining this refund (optional, internal note):', '')
+    if (note === null) return
+    act({ action: 'reject_refund', refundId: id, note }, 'rf' + id)
+  }
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>Loading admin…</div>
   if (!data) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>No data.</div>
+
+  const openRefunds = (data.refunds || []).filter(r => r.status === 'requested').length
 
   const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: 'pending', label: 'Pending approvals', count: data.pending.length },
     { key: 'products', label: 'All products', count: data.products.length },
     { key: 'sellers', label: 'Sellers', count: data.sellers.length },
     { key: 'orders', label: 'Orders', count: data.orders.length },
+    { key: 'refunds', label: 'Refunds', count: openRefunds },
     { key: 'reviews', label: 'Reviews', count: data.pendingReviews.length },
     { key: 'accounting', label: 'Accounting' },
   ]
@@ -246,6 +286,42 @@ export default function AdminDashboard() {
                           style={{ background: 'transparent', color: '#aaa', border: 'none', fontSize: 11, textDecoration: 'underline', cursor: 'pointer' }}>mark paid (manual)</button>}
                   </Card>
                 ))}
+              </div>
+        )}
+
+        {/* REFUNDS */}
+        {tab === 'refunds' && (
+          (data.refunds || []).length === 0
+            ? <Empty text="No refund requests yet." />
+            : <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {data.refunds.map(rf => {
+                  const recovery = RECOVERY_LABEL[rf.seller_recovery_status] || ''
+                  return (
+                    <Card key={rf.id}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, color: NAVY, fontSize: 14 }}>
+                          {rf.orders?.order_number || 'Order'} · {money(rf.amount_cents)}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+                          {rf.sellers?.store_name || '—'} · Reason: <b style={{ color: NAVY }}>{REASON_LABEL[rf.reason_type] || rf.reason_type}</b>
+                          {' · '}<span style={{ color: rf.status === 'rejected' || rf.status === 'failed' ? RED : '#888', fontWeight: 700 }}>{REFUND_STATUS_LABEL[rf.status] || rf.status}</span>
+                        </div>
+                        {rf.reason_note && <div style={{ fontSize: 13, color: '#444', marginTop: 4, fontStyle: 'italic' }}>“{rf.reason_note}”</div>}
+                        {rf.status === 'processed' && recovery && (
+                          <div style={{ fontSize: 12, color: rf.seller_recovery_status === 'chase_seller' ? '#b26a00' : GREEN, marginTop: 4, fontWeight: 700 }}>{recovery}</div>
+                        )}
+                      </div>
+                      {rf.status === 'requested' ? (
+                        <>
+                          <button disabled={busy === 'rf' + rf.id} onClick={() => approveRefund(rf.id)} style={btnSolid(GREEN)}>Approve refund</button>
+                          <button disabled={busy === 'rf' + rf.id} onClick={() => rejectRefund(rf.id)} style={btnGhost(RED)}>Decline</button>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: 12, color: '#999' }}>{new Date(rf.requested_at).toLocaleDateString('en-ZA')}</span>
+                      )}
+                    </Card>
+                  )
+                })}
               </div>
         )}
 

@@ -5,7 +5,7 @@ import {
 } from "@/lib/supabase-server";
 
 /**
- * GET  /api/admin  -> { pending, products, sellers, orders, accounting }
+ * GET  /api/admin  -> { pending, products, sellers, orders, refunds, accounting }
  * POST /api/admin  -> perform an action (admin only)
  *
  * Accounting note: sellers are paid directly by Paystack via subaccount splits,
@@ -73,6 +73,13 @@ export async function GET(req: Request) {
       .select("id, order_number, status, subtotal_cents, shipping_cents, total_cents, commission_cents, seller_amount_cents, spaza_amount_cents, seller_id, paid_at, shipping_name, created_at")
       .order("created_at", { ascending: false })
       .limit(200);
+
+    // ---- refunds: open requests + recent history, for the admin to action ----
+    const { data: refunds } = await admin
+      .from("order_refunds")
+      .select("id, order_id, reason_type, reason_note, amount_cents, status, paystack_refund_status, seller_recovery_status, requested_at, orders(order_number), sellers(store_name)")
+      .order("requested_at", { ascending: false })
+      .limit(100);
 
     // ---- accounting: paid (settled) vs pending (projection) ----
     const PAID = new Set(["paid", "processing", "shipped", "delivered"]);
@@ -144,6 +151,7 @@ export async function GET(req: Request) {
       pendingReviews: pendingReviews ?? [],
       sellers: sellers ?? [],
       orders: orders ?? [],
+      refunds: refunds ?? [],
       accounting: {
         paid: { gross_cents: paidGross, commission_cents: paidCommission, seller_amount_cents: paidSellerAmt },
         pending: { gross_cents: pendGross, commission_cents: pendCommission, seller_amount_cents: pendSellerAmt },
@@ -306,6 +314,97 @@ export async function POST(req: Request) {
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         return NextResponse.json({ ok: true });
       }
+
+      // ---- REFUNDS ----
+      case "approve_refund": {
+        // Approve a buyer's refund request and fire the Paystack refund.
+        // We do NOT mark the order "refunded" here — the refund.processed
+        // webhook does that. We move the request to "processing".
+        const refundId = String(body?.refundId || "");
+        if (!refundId) return NextResponse.json({ error: "Missing refundId" }, { status: 400 });
+
+        const secret = process.env.PAYSTACK_SECRET_KEY || "";
+        if (!secret)
+          return NextResponse.json({ error: "Paystack not configured (PAYSTACK_SECRET_KEY missing)." }, { status: 500 });
+
+        const { data: refund, error: rErr } = await admin
+          .from("order_refunds")
+          .select("id, order_id, status, amount_cents, paystack_reference")
+          .eq("id", refundId)
+          .maybeSingle();
+        if (rErr) return NextResponse.json({ error: rErr.message }, { status: 500 });
+        if (!refund) return NextResponse.json({ error: "Refund not found." }, { status: 404 });
+        if (refund.status !== "requested")
+          return NextResponse.json({ error: `This refund is already ${refund.status}.` }, { status: 409 });
+        if (!refund.paystack_reference)
+          return NextResponse.json({ error: "This refund has no transaction reference." }, { status: 409 });
+
+        // snapshot current order status so a failed refund can restore it
+        const { data: ord } = await admin
+          .from("orders").select("status").eq("id", refund.order_id).maybeSingle();
+        const priorStatus = ord?.status || "paid";
+
+        const res = await fetch("https://api.paystack.co/refund", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ transaction: refund.paystack_reference, amount: refund.amount_cents }),
+        });
+        const pj = await res.json().catch(() => null);
+        if (!res.ok || !pj?.status)
+          return NextResponse.json(
+            { error: "Paystack rejected the refund.", detail: pj?.message || `HTTP ${res.status}` },
+            { status: 502 }
+          );
+
+        await admin
+          .from("order_refunds")
+          .update({
+            status: "processing",
+            paystack_refund_status: pj?.data?.status || "pending",
+            decided_by: user.id,
+            decided_at: now,
+            updated_at: now,
+          })
+          .eq("id", refund.id);
+
+        await admin
+          .from("orders")
+          .update({ status: "refund_requested", pre_refund_status: priorStatus, updated_at: now })
+          .eq("id", refund.order_id);
+
+        return NextResponse.json({ ok: true, status: "processing" });
+      }
+      case "reject_refund": {
+        const refundId = String(body?.refundId || "");
+        const note = String(body?.note || "").trim() || null;
+        if (!refundId) return NextResponse.json({ error: "Missing refundId" }, { status: 400 });
+
+        const { data: refund } = await admin
+          .from("order_refunds")
+          .select("id, order_id, status")
+          .eq("id", refundId)
+          .maybeSingle();
+        if (!refund) return NextResponse.json({ error: "Refund not found." }, { status: 404 });
+        if (refund.status !== "requested")
+          return NextResponse.json({ error: `This refund is already ${refund.status}.` }, { status: 409 });
+
+        await admin
+          .from("order_refunds")
+          .update({ status: "rejected", admin_note: note, decided_by: user.id, decided_at: now, updated_at: now })
+          .eq("id", refund.id);
+
+        // restore the order from refund_requested back to its prior status
+        const { data: ord } = await admin
+          .from("orders").select("pre_refund_status").eq("id", refund.order_id).maybeSingle();
+        const restore = ord?.pre_refund_status || "paid";
+        await admin
+          .from("orders")
+          .update({ status: restore, updated_at: now })
+          .eq("id", refund.order_id);
+
+        return NextResponse.json({ ok: true, status: "rejected" });
+      }
+
       default:
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }
