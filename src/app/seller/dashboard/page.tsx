@@ -29,7 +29,21 @@ interface SellerOrder {
   unit_price_cents: number; total_cents: number; seller_payout_cents: number; created_at: string;
   tracking_number?: string | null; ready_at?: string | null;
   length_cm?: number | null; width_cm?: number | null; height_cm?: number | null; weight_kg?: number | null;
-  orders?: { id: string; order_number: string; status: string; created_at: string; shipping_name: string; shipping_city: string; shipping_province: string } | null
+  orders?: { id: string; order_number: string; status: string; created_at: string; shipping_name: string; shipping_city: string; shipping_province: string } | null;
+  refund?: { reason_type: string; reason_note: string | null; status: string; amount_cents: number; requested_at: string } | null
+}
+
+const REFUND_REASON: Record<string, string> = {
+  defective: 'Faulty / damaged',
+  not_as_described: 'Not as described',
+  discretionary: 'Buyer changed mind',
+}
+const REFUND_STATUS: Record<string, string> = {
+  requested: 'Refund requested',
+  processing: 'Refund processing',
+  processed: 'Refunded',
+  rejected: 'Refund declined',
+  failed: 'Refund failed',
 }
 
 const money = (cents: number) =>
@@ -712,6 +726,16 @@ export default function SellerDashboard() {
                   {o.orders?.shipping_name && (
                     <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>Ship to: {o.orders.shipping_name}{o.orders.shipping_city ? `, ${o.orders.shipping_city}` : ''}{o.orders.shipping_province ? `, ${o.orders.shipping_province}` : ''}</div>
                   )}
+                  {o.refund && (
+                    <div style={{ marginTop: 6, display: 'inline-flex', flexDirection: 'column', gap: 2, background: '#fff6f6', border: `1px solid ${RED}33`, borderRadius: 8, padding: '6px 10px' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: RED }}>
+                        {REFUND_STATUS[o.refund.status] || 'Refund'} · {REFUND_REASON[o.refund.reason_type] || o.refund.reason_type}
+                      </span>
+                      {o.refund.reason_note && (
+                        <span style={{ fontSize: 12, color: '#8a4b4b', fontStyle: 'italic' }}>“{o.refund.reason_note}”</span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontFamily: 'var(--font-bebas)', color: NAVY, fontSize: 20 }}>{money(o.total_cents)}</div>
@@ -784,3 +808,4 @@ function Field({ label, value, onChange, type = 'text', placeholder }: {
     </label>
   )
 }
+
