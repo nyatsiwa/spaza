@@ -5,11 +5,11 @@ import { createAdminClient } from "@/lib/supabase-server";
 /**
  * POST /api/paystack/webhook
  *
- * Handles two kinds of events, distinguished by metadata.type:
- *   - product orders (default): charge.success -> mark order paid
- *   - growth_subscription: charge.success / subscription.create ->
- *       activate seller Growth; subscription.disable / invoice.payment_failed ->
- *       downgrade seller to Free and hide products over the Free limit.
+ * Handles:
+ *   - refund events (refund.*)              -> finalize order_refunds + order
+ *   - growth_subscription (charge.success / subscription.create) -> activate seller
+ *   - subscription.disable / invoice.payment_failed -> downgrade seller
+ *   - product orders (charge.success)       -> mark order paid
  *
  * Signature: HMAC-SHA512 of the RAW body keyed with the secret key.
  */
@@ -50,19 +50,119 @@ export async function POST(req: Request) {
   const metaType = data?.metadata?.type || "";
 
   try {
+    // ---------- REFUND EVENTS ----------
+    if (type.startsWith("refund.")) {
+      const txnRef: string =
+        data?.transaction_reference ||
+        data?.transaction?.reference ||
+        data?.reference ||
+        "";
+
+      if (!txnRef) {
+        return NextResponse.json({ received: true }, { status: 200 });
+      }
+
+      const { data: refundRow } = await admin
+        .from("order_refunds")
+        .select("id, order_id, seller_amount_cents, status")
+        .eq("paystack_reference", txnRef)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!refundRow) {
+        return NextResponse.json({ received: true }, { status: 200 });
+      }
+
+      const paystackStatus = data?.status || type.replace("refund.", "");
+
+      // terminal: processed
+      if (type === "refund.processed") {
+        await admin
+          .from("order_refunds")
+          .update({
+            status: "processed",
+            paystack_refund_status: "processed",
+            resolved_at: now,
+            updated_at: now,
+          })
+          .eq("id", refundRow.id);
+
+        await admin
+          .from("orders")
+          .update({ status: "refunded", refunded_at: now, updated_at: now })
+          .eq("id", refundRow.order_id);
+
+        // seller recovery flagged for admin confirmation (Paystack may have
+        // auto-reversed the subaccount, or already settled it to the seller).
+        await admin
+          .from("order_refunds")
+          .update({ seller_recovery_status: "chase_seller", updated_at: now })
+          .eq("id", refundRow.id);
+
+        return NextResponse.json({ received: true }, { status: 200 });
+      }
+
+      // terminal: failed -> restore order
+      if (type === "refund.failed") {
+        await admin
+          .from("order_refunds")
+          .update({
+            status: "failed",
+            paystack_refund_status: "failed",
+            updated_at: now,
+          })
+          .eq("id", refundRow.id);
+
+        const { data: ord } = await admin
+          .from("orders")
+          .select("pre_refund_status")
+          .eq("id", refundRow.order_id)
+          .maybeSingle();
+        const restore = ord?.pre_refund_status || "paid";
+        await admin
+          .from("orders")
+          .update({ status: restore, updated_at: now })
+          .eq("id", refundRow.order_id);
+
+        return NextResponse.json({ received: true }, { status: 200 });
+      }
+
+      // needs-attention: bank details missing
+      if (type === "refund.needs-attention") {
+        await admin
+          .from("order_refunds")
+          .update({
+            paystack_refund_status: "needs-attention",
+            admin_note:
+              "Paystack needs the customer's bank details to complete this refund (use the Retry Refund API).",
+            updated_at: now,
+          })
+          .eq("id", refundRow.id);
+        return NextResponse.json({ received: true }, { status: 200 });
+      }
+
+      // non-terminal: pending / processing
+      await admin
+        .from("order_refunds")
+        .update({ paystack_refund_status: paystackStatus, updated_at: now })
+        .eq("id", refundRow.id);
+
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
     // ---------- GROWTH SUBSCRIPTION EVENTS ----------
-    // First charge / subscription creation: activate Growth.
     if (
       (type === "charge.success" && metaType === "growth_subscription") ||
       type === "subscription.create"
     ) {
-      // seller_id: from our metadata (charge.success) or by matching the
-      // subscription's plan + customer for subscription.create.
       let sellerId: string = data?.metadata?.seller_id || "";
       const reference: string = data?.reference || "";
-      const subscriptionCode: string = data?.subscription_code || data?.subscription?.subscription_code || "";
+      const subscriptionCode: string =
+        data?.subscription_code || data?.subscription?.subscription_code || "";
       const emailToken: string = data?.email_token || "";
-      const nextPayment: string = data?.next_payment_date || data?.subscription?.next_payment_date || "";
+      const nextPayment: string =
+        data?.next_payment_date || data?.subscription?.next_payment_date || "";
 
       // Fallback 1: find seller by the pending subscription reference.
       if (!sellerId && reference) {
@@ -74,12 +174,7 @@ export async function POST(req: Request) {
         sellerId = subRow?.seller_id || "";
       }
 
-      // Fallback 2: resolve by customer email. This is the path that matters
-      // for `subscription.create`, which carries the customer email + the
-      // subscription_code but NONE of our metadata and no order reference.
-      // charge.success and subscription.create can also arrive in either
-      // order, so email is the only key both events independently carry.
-      // email -> profiles.id (= sellers.user_id) -> seller.
+      // Fallback 2: resolve by customer email (subscription.create path).
       if (!sellerId) {
         const customerEmail: string =
           data?.customer?.email || data?.subscription?.customer?.email || "";
@@ -101,16 +196,18 @@ export async function POST(req: Request) {
       }
 
       if (sellerId) {
-        // activate the seller on Growth
         await admin
           .from("sellers")
           .update({ plan: "growth", status: "active", approved_at: now, updated_at: now })
           .eq("id", sellerId);
 
-        // update the subscription row
-        const periodEnd = nextPayment || (() => {
-          const d = new Date(); d.setMonth(d.getMonth() + 1); return d.toISOString();
-        })();
+        const periodEnd =
+          nextPayment ||
+          (() => {
+            const d = new Date();
+            d.setMonth(d.getMonth() + 1);
+            return d.toISOString();
+          })();
         const subPatch: Record<string, unknown> = {
           plan: "growth",
           status: "active",
@@ -155,13 +252,11 @@ export async function POST(req: Request) {
       }
 
       if (sellerId) {
-        // downgrade seller to Free
         await admin
           .from("sellers")
           .update({ plan: "free", updated_at: now })
           .eq("id", sellerId);
 
-        // subscription row -> cancelled/free
         const { data: existingSub } = await admin
           .from("seller_subscriptions")
           .select("id")
@@ -174,7 +269,6 @@ export async function POST(req: Request) {
             .eq("id", existingSub.id);
         }
 
-        // hide products over the Free limit: keep the 5 OLDEST active, hide the rest
         const { data: activeProducts } = await admin
           .from("products")
           .select("id, created_at")
