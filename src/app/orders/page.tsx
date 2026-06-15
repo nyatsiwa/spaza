@@ -36,24 +36,12 @@ export default function OrdersPage() {
   const supabase = createClient()
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
-  const [fullName, setFullName] = useState('')
 
   useEffect(() => {
     let on = true
     ;(async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login?redirect=/orders'); return }
-
-      // Fetch the buyer's name for the header greeting.
-      try {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('full_name')
-          .eq('id', user.id)
-          .single()
-        if (on && profile?.full_name) setFullName(profile.full_name)
-      } catch { /* ignore */ }
-
       const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/orders`
         + `?select=id,order_number,status,total_cents,subtotal_cents,shipping_cents,shipping_city,shipping_province,created_at,order_items(id,product_name,product_image,quantity,total_cents)`
         + `&buyer_id=eq.${user.id}&order=created_at.desc`
@@ -82,10 +70,7 @@ export default function OrdersPage() {
       <div style={{ background: C.red, padding: '0 20px', height: 60, display: 'flex', alignItems: 'center' }}>
         <div style={{ maxWidth: 900, margin: 'auto', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Link href="/" style={{ fontFamily: 'var(--font-bebas)', fontSize: 30, color: C.white, letterSpacing: 2, textDecoration: 'none' }}>SPA<span style={{ color: C.gold }}>ZA</span></Link>
-          <Link href="/account" style={{ color: '#fff', fontSize: 13, textDecoration: 'none', textAlign: 'right', lineHeight: 1.3 }}>
-            {fullName ? <span style={{ display: 'block', fontWeight: 700, fontSize: 14 }}>{fullName}</span> : null}
-            <span style={{ opacity: fullName ? 0.85 : 1 }}>My account</span>
-          </Link>
+          <Link href="/account" style={{ color: '#fff', fontSize: 13, textDecoration: 'none' }}>My account</Link>
         </div>
       </div>
 
