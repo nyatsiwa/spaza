@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Bebas_Neue, DM_Sans, DM_Mono } from 'next/font/google'
 import { Toaster } from 'react-hot-toast'
+import IdleTimeout from '@/components/IdleTimeout'
 import './globals.css'
 
 const bebasNeue = Bebas_Neue({
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en-ZA" className={`${bebasNeue.variable} ${dmSans.variable} ${dmMono.variable}`}>
       <body className="bg-gray-50 font-body text-gray-800 antialiased">
+        <IdleTimeout />
         {children}
         <Toaster
           position="bottom-right"
